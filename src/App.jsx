@@ -116,6 +116,8 @@ function App() {
   const recordingSilenceTimeoutRef = useRef(null)
   const finishRecordingRef = useRef(null)
   const activeSentence = sentences[activeIndex] ?? ''
+  const activeScore = sentenceScores[activeIndex]?.overall
+  const sentenceStatus = activeScore === undefined ? 'unread' : activeScore >= 90 ? 'excellent' : activeScore <= 70 ? 'needs-work' : 'in-progress'
   const progress = sentences.length ? ((activeIndex + 1) / sentences.length) * 100 : 0
 
   useEffect(() => () => {
@@ -352,7 +354,7 @@ function App() {
       </aside>
       <section className="practice-panel" aria-live="polite"><div className="session-header"><div><p className="eyebrow">SHADOWING SESSION</p><h2>逐句跟读</h2></div><div className="sentence-count">{activeIndex + 1} <span>/ {sentences.length}</span></div></div>
         <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
-        <article className="sentence-card"><span className="quote-mark">“</span><p>{activeSentence || '准备好后，从左侧输入英文文本。'}</p><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}{isPlaying ? '停止播放' : '听原句'}</button></article>
+        <article className={`sentence-card ${sentenceStatus}`}><span className="quote-mark">“</span><p>{activeSentence || '准备好后，从左侧输入英文文本。'}</p><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}{isPlaying ? '停止播放' : '听原句'}</button></article>
         <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : '请允许浏览器使用麦克风'}</p></div></div>
         {notice && <p className="notice">{notice}</p>}
         {transcript && <div className="transcript-box"><p className="eyebrow">识别到的内容</p><p>{transcript}</p></div>}
