@@ -4,22 +4,21 @@ import './App.css'
 
 const sampleText = `Great speakers are not born overnight. They grow through small, deliberate repetitions. Listen closely, speak with intention, and let every sentence become a little more natural.`
 const practiceSentenceBank = [
-  'I like to begin my day with a clear plan.',
-  'The train arrives at the station in ten minutes.',
-  'She explained the idea with a simple example.',
-  'A short walk can help me focus again.',
-  'We should check the details before making a decision.',
-  'The weather is perfect for an afternoon outside.',
-  'He asked a thoughtful question during the meeting.',
-  'Learning a language takes patience and regular practice.',
-  'Please let me know when you are ready to start.',
-  'The small cafe serves fresh bread every morning.',
-  'I remembered to bring my notebook and a pen.',
-  'They found a quiet place to talk after lunch.',
-  'This new habit is becoming easier every week.',
-  'Could you repeat that sentence a little more slowly?',
-  'The team celebrated after finishing the project.',
+  'Every time you pause to notice the exact words people use, you give yourself a stronger path toward speaking English with clarity and confidence.',
+  'A patient learner understands that steady practice on ordinary days creates the confidence needed for difficult conversations later.',
+  'When you listen for the rhythm of a sentence instead of translating each word, English begins to sound more natural and memorable.',
+  'Small improvements are easy to overlook, but they gradually turn a hesitant speaker into someone who can share ideas with ease.',
+  'The most useful question in a conversation is often a simple one that invites the other person to explain what matters to them.',
+  'Reading aloud for a few focused minutes each day helps your mouth become familiar with sounds that once felt unfamiliar.',
+  'You do not need perfect vocabulary to communicate well when you pay attention, speak clearly, and respond with genuine curiosity.',
+  'A thoughtful pause can make your next sentence more precise, and it gives your listener time to follow your meaning.',
+  'People remember how a conversation made them feel, so kindness and careful listening are as valuable as accurate grammar.',
+  'The best way to prepare for an unexpected question is to build the habit of explaining your everyday thoughts in English.',
+  'Progress becomes easier to see when you compare your current speaking habits with the person you were a few weeks ago.',
+  'Each new expression becomes more useful when you connect it to a real situation you might describe to a friend or colleague.',
 ]
+const onlineQuoteUrl = 'https://dummyjson.com/quotes?limit=200&skip='
+const minimumSentenceLength = 70
 const trainingDraftStorageKey = 'echo-english.training-draft'
 const trainingHistoryStorageKey = 'echo-english.training-history'
 const trainingProgressStorageKey = 'echo-english.training-progress'
@@ -92,6 +91,7 @@ function App() {
     return incompleteIndex === -1 ? 0 : incompleteIndex
   })
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [result, setResult] = useState(null)
@@ -203,14 +203,29 @@ function App() {
     saveTrainingText(text)
     restorePractice(text, nextSentences)
   }
-  const generatePracticeSentences = () => {
-    const nextSentences = [...practiceSentenceBank]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 10)
+  const pickPracticeSentences = (items) => [...new Set(items)]
+    .filter((sentence) => sentence.length >= minimumSentenceLength)
+    .sort(() => Math.random() - 0.5)
+    .slice(0, 10)
+  const generatePracticeSentences = async () => {
+    setIsGenerating(true)
+    let nextSentences = []
+    try {
+      const skip = Math.floor(Math.random() * 1254)
+      const response = await fetch(`${onlineQuoteUrl}${skip}`)
+      if (!response.ok) throw new Error('Unable to load online quotes')
+      const data = await response.json()
+      nextSentences = pickPracticeSentences((data.quotes ?? []).flatMap(({ quote }) => splitIntoSentences(quote)))
+    } catch {
+      nextSentences = []
+    }
+    if (nextSentences.length < 10) nextSentences = pickPracticeSentences(practiceSentenceBank)
     const generatedText = nextSentences.join(' ')
     setText(generatedText)
     saveTrainingText(generatedText)
     restorePractice(generatedText, nextSentences)
+    setNotice(nextSentences.length === 10 ? '已准备好 10 个较完整的英文句子。' : '未能准备足够的练习句子，请再试一次。')
+    setIsGenerating(false)
   }
   const speak = () => {
     if (!activeSentence || !window.speechSynthesis) return
@@ -350,7 +365,7 @@ function App() {
         <details className="device-settings"><summary>设备设置</summary><div className="speaker-picker"><label htmlFor="speaker">播放设备</label><div><select id="speaker" value={selectedSpeaker} onChange={(event) => selectSpeaker(event.target.value)} disabled={!speakers.length}><option value="">系统默认播放设备</option>{speakers.map((speaker, index) => <option key={speaker.deviceId} value={speaker.deviceId}>{speaker.label || `扬声器 ${index + 1}`}</option>)}</select><button className="detect-button" onClick={loadDevices} disabled={isRecording || isTestingMicrophone}>刷新设备</button></div><p>原生朗读由浏览器输出到系统默认设备。</p></div><div className="microphone-picker"><div className="microphone-test-copy"><label>麦克风</label><p>使用 Windows 或浏览器当前的默认输入设备。</p></div><button className="detect-button" onClick={testMicrophone} disabled={isRecording}>{isTestingMicrophone ? '结束测试' : '测试麦克风'}</button>{isTestingMicrophone && <div className="microphone-level" aria-label={`麦克风音量 ${microphoneLevel}%`}><span style={{ width: `${microphoneLevel}%` }} /></div>}</div></details>
         <textarea value={text} onChange={(event) => setText(event.target.value)} aria-label="英文练习文本" placeholder="Paste an English paragraph here..." />
         {trainingHistory.length > 0 && <div className="saved-training-texts"><label htmlFor="saved-training-text">最近练习</label><select id="saved-training-text" defaultValue="" onChange={(event) => { if (event.target.value) setText(event.target.value); event.target.value = '' }}><option value="" disabled>打开本机保存的文本</option>{trainingHistory.map((saved, index) => <option key={saved} value={saved}>{`练习 ${index + 1}: ${saved.slice(0, 54)}${saved.length > 54 ? '...' : ''}`}</option>)}</select></div>}
-        <div className="editor-footer"><span>{splitIntoSentences(text).length} sentences</span><div className="editor-actions"><button className="generate-button" onClick={generatePracticeSentences}><Sparkles size={16} />随机 10 句</button><button className="primary-button" onClick={prepareText}>开始练习 <ChevronRight size={17} /></button></div></div>
+        <div className="editor-footer"><span>{splitIntoSentences(text).length} sentences</span><div className="editor-actions"><button className="generate-button" onClick={generatePracticeSentences} disabled={isGenerating}>{isGenerating ? <Pause size={16} /> : <Sparkles size={16} />}{isGenerating ? '正在寻找...' : '网上随机 10 句'}</button><button className="primary-button" onClick={prepareText}>开始练习 <ChevronRight size={17} /></button></div></div>
       </aside>
       <section className="practice-panel" aria-live="polite"><div className="session-header"><div><p className="eyebrow">SHADOWING SESSION</p><h2>逐句跟读</h2></div><div className="sentence-count">{activeIndex + 1} <span>/ {sentences.length}</span></div></div>
         <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
