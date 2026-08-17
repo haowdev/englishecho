@@ -19,6 +19,7 @@ const practiceSentenceBank = [
 ]
 const onlineQuoteUrl = 'https://dummyjson.com/quotes?limit=200&skip='
 const minimumSentenceLength = 70
+const religiousContentPattern = /\b(?:allah|angel|bible|buddha|buddhist|christ|christian|church|divine|faith|god|goddess|heaven|hell|hindu|islam|jesus|mosque|muslim|pope|prayer|pray|priest|prophet|quran|religion|religious|scripture|spiritual|synagogue|temple|worship)\b/i
 const trainingHistoryStorageKey = 'echo-english.training-history'
 const trainingProgressStorageKey = 'echo-english.training-progress'
 const trainingLastPracticeStorageKey = 'echo-english.last-practice'
@@ -92,6 +93,8 @@ function App() {
   const [trainingHistory, setTrainingHistory] = useState(readTrainingHistory)
   const [activeView, setActiveView] = useState('start')
   const [sentenceScores, setSentenceScores] = useState([])
+  const [selectedWord, setSelectedWord] = useState('')
+  const [wordLookup, setWordLookup] = useState({ word: '', status: 'idle', translation: '' })
   const recognitionRef = useRef(null)
   const microphoneStreamRef = useRef(null)
   const recordingSilenceTimeoutRef = useRef(null)
@@ -111,6 +114,36 @@ function App() {
     microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
     clearTimeout(recordingSilenceTimeoutRef.current)
   }, [])
+
+  useEffect(() => {
+    setSelectedWord('')
+  }, [activeSentence])
+
+  useEffect(() => {
+    if (!selectedWord) {
+      setWordLookup({ word: '', status: 'idle', translation: '' })
+      return undefined
+    }
+    const controller = new AbortController()
+    setWordLookup({ word: selectedWord, status: 'loading', translation: '' })
+    const lookUpWord = async () => {
+      try {
+        const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(selectedWord)}&langpair=en|zh-CN`, { signal: controller.signal })
+        if (!response.ok) throw new Error('Unable to translate word')
+        const data = await response.json()
+        const translation = data.responseData?.translatedText?.trim()
+        setWordLookup({
+          word: selectedWord,
+          status: translation ? 'ready' : 'unavailable',
+          translation: translation || '暂时没有找到中文释义',
+        })
+      } catch (error) {
+        if (error.name !== 'AbortError') setWordLookup({ word: selectedWord, status: 'unavailable', translation: '暂时无法查询中文释义' })
+      }
+    }
+    lookUpWord()
+    return () => controller.abort()
+  }, [selectedWord])
 
   const requestMicrophone = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -153,6 +186,7 @@ function App() {
     const savedScores = readSentenceScores(nextText, nextSentences)
     const incompleteIndex = firstIncompleteSentence(savedScores, nextSentences.length)
     setSentences(nextSentences)
+    setSelectedWord('')
     setSentenceScores(savedScores)
     setActiveIndex(incompleteIndex === -1 ? 0 : incompleteIndex)
     setTranscript(''); setResult(null)
@@ -179,6 +213,7 @@ function App() {
   }
   const pickPracticeSentences = (items) => [...new Set(items)]
     .filter((sentence) => sentence.length >= minimumSentenceLength)
+    .filter((sentence) => !religiousContentPattern.test(sentence))
     .sort(() => Math.random() - 0.5)
     .slice(0, 10)
   const generatePracticeSentences = async () => {
@@ -210,6 +245,18 @@ function App() {
     utterance.onstart = () => setIsPlaying(true); utterance.onend = () => setIsPlaying(false); utterance.onerror = () => setIsPlaying(false)
     window.speechSynthesis.speak(utterance)
   }
+  const speakWord = (word) => {
+    if (!word || !window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(word)
+    utterance.lang = 'en-US'; utterance.rate = 0.78
+    window.speechSynthesis.speak(utterance)
+  }
+  const renderSentenceWords = (sentence) => (sentence.match(/[A-Za-z]+(?:'[A-Za-z]+)?|[^A-Za-z]+/g) ?? []).map((part, index) => {
+    if (!/^[A-Za-z]+(?:'[A-Za-z]+)?$/.test(part)) return <span key={`${part}-${index}`}>{part}</span>
+    const word = part.toLowerCase()
+    return <button className={`sentence-word ${selectedWord === word ? 'selected' : ''}`} key={`${part}-${index}`} onClick={() => { setSelectedWord(word); speakWord(word) }} aria-label={`查询并朗读 ${part}`}>{part}</button>
+  })
   const startRecording = async () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) { setNotice('当前浏览器不支持语音识别。请使用最新版 Chrome 或 Edge。'); return }
@@ -301,7 +348,7 @@ function App() {
       </aside>}
       {activeView === 'practice' && <section className="practice-panel" aria-live="polite"><div className="session-header"><div><p className="eyebrow">SHADOWING SESSION</p><h2>逐句跟读</h2></div><div className="sentence-count">{activeIndex + 1} <span>/ {sentences.length}</span></div></div>
         {isPracticeComplete ? <section className="completion-panel"><p className="eyebrow">SESSION COMPLETE</p><h3>本次平均得分</h3><div className="completion-donut"><svg viewBox="0 0 120 120" aria-label={`平均得分 ${averageScore} 分`} role="img"><circle className="donut-track" cx="60" cy="60" r="48" pathLength="100" /><circle className="donut-value" cx="60" cy="60" r="48" pathLength="100" strokeDasharray={`${averageScore} ${100 - averageScore}`} /></svg><div><strong>{averageScore}</strong><span>分</span></div></div><p className="completion-detail">总分 {scoreTotal} ÷ {sentences.length} 句</p></section> : <><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
-        <article className={`sentence-card ${sentenceStatus}`}><span className="quote-mark">“</span><p>{activeSentence || '准备好后，从左侧输入英文文本。'}</p><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence || isRecording}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}{isPlaying ? '停止播放' : '听原句'}</button></article>
+        <article className={`sentence-card ${sentenceStatus}`}><span className="quote-mark">“</span><p>{activeSentence ? renderSentenceWords(activeSentence) : '准备好后，从左侧输入英文文本。'}</p>{selectedWord && <div className="word-lookup" role="status"><div><span>{selectedWord}</span><strong>{wordLookup.word === selectedWord && wordLookup.status === 'loading' ? '正在查询中文释义...' : wordLookup.translation}</strong></div><button className="word-listen-button" onClick={() => speakWord(selectedWord)} title="朗读单词" aria-label={`朗读 ${selectedWord}`}><Volume2 size={18} /></button></div>}<button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence || isRecording}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}{isPlaying ? '停止播放' : '听原句'}</button></article>
         <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : '请允许浏览器使用麦克风'}</p></div></div>
         {notice && <p className="notice">{notice}</p>}
         {transcript && <div className="transcript-box"><p className="eyebrow">识别到的内容</p><p>{transcript}</p></div>}
