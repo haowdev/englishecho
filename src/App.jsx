@@ -104,7 +104,7 @@ function App() {
   const sentenceStatus = activeScore === undefined ? 'unread' : activeScore >= 90 ? 'excellent' : activeScore <= 70 ? 'needs-work' : 'in-progress'
   const progress = sentences.length ? ((activeIndex + 1) / sentences.length) * 100 : 0
   const scoredSentenceCount = sentenceScores.filter((score) => typeof score?.overall === 'number').length
-  const isPracticeComplete = sentences.length > 0 && scoredSentenceCount === sentences.length
+  const isPracticeComplete = sentences.length > 0 && sentences.every((_, index) => sentenceScores[index]?.overall >= 90)
   const scoreTotal = sentenceScores.reduce((total, score) => total + (score?.overall ?? 0), 0)
   const averageScore = isPracticeComplete ? Math.round(scoreTotal / sentences.length) : 0
 
