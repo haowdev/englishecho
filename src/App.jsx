@@ -293,7 +293,7 @@ function App() {
       }
     }
     finishRecordingRef.current = finishAttempt
-    recognition.lang = 'en-US'; recognition.interimResults = true; recognition.continuous = true; recognition.maxAlternatives = 3
+    recognition.lang = 'en-US'; recognition.interimResults = true; recognition.continuous = false; recognition.maxAlternatives = 3
     recognition.onstart = () => { if (recognitionRef.current === recognition) setIsRecording(true) }
     recognition.onresult = (event) => {
       if (recognitionRef.current !== recognition) return
@@ -320,8 +320,6 @@ function App() {
     recognition.onend = () => {
       if (recognitionRef.current !== recognition) return
       clearTimeout(recordingSilenceTimeoutRef.current)
-      microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
-      microphoneStreamRef.current = null
       setIsRecording(false)
       finishRecordingRef.current = null
     }
