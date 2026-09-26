@@ -317,9 +317,14 @@ function App() {
       }
       setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试。`)
     }
-    recognition.onend = () => { if (recognitionRef.current === recognition) { setIsRecording(false); finishRecordingRef.current = null } }
-    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
-    microphoneStreamRef.current = null
+    recognition.onend = () => {
+      if (recognitionRef.current !== recognition) return
+      clearTimeout(recordingSilenceTimeoutRef.current)
+      microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
+      microphoneStreamRef.current = null
+      setIsRecording(false)
+      finishRecordingRef.current = null
+    }
     recognitionRef.current = recognition; recognition.start()
   }
   const retryAttempt = () => {
