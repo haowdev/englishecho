@@ -156,10 +156,11 @@ function App() {
     }
     try {
       microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
-      microphoneStreamRef.current = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
       })
-      setNotice('默认麦克风已准备好。')
+      stream.getTracks().forEach((track) => track.stop())
+      microphoneStreamRef.current = null
       return true
     } catch (error) {
       const messages = {
@@ -266,12 +267,9 @@ function App() {
   const startRecording = async () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) { setNotice('当前浏览器不支持语音识别。请使用最新版 Chrome 或 Edge。'); return }
-    const microphoneIsReady = microphoneStreamRef.current?.getAudioTracks().some((track) => track.readyState === 'live')
-    if (!microphoneIsReady) {
-      setNotice('正在准备麦克风...')
-      const microphoneReady = await requestMicrophone()
-      if (!microphoneReady) return
-    }
+    setNotice('正在准备麦克风...')
+    const microphoneReady = await requestMicrophone()
+    if (!microphoneReady) return
     setTranscript(''); setResult(null); setNotice('')
     const recognition = new SpeechRecognition()
     let latestSpoken = ''
@@ -320,6 +318,7 @@ function App() {
     recognition.onend = () => {
       if (recognitionRef.current !== recognition) return
       clearTimeout(recordingSilenceTimeoutRef.current)
+      recognitionRef.current = null
       setIsRecording(false)
       finishRecordingRef.current = null
     }
