@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, History, Mic, Pause, RotateCcw, Sparkles, Volume2, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, History, Mic, Pause, RotateCcw, Sparkles, Trash2, Volume2, X } from 'lucide-react'
 import './App.css'
 import './theme.css'
 
@@ -318,6 +318,7 @@ function App() {
     recognition.onend = () => {
       if (recognitionRef.current !== recognition) return
       clearTimeout(recordingSilenceTimeoutRef.current)
+      if (!hasScored && latestSpoken) finishAttempt()
       recognitionRef.current = null
       setIsRecording(false)
       finishRecordingRef.current = null
@@ -348,10 +349,19 @@ function App() {
     restorePractice(savedText, savedSentences)
     setActiveView('practice')
   }
+  const clearTrainingHistory = () => {
+    if (!window.confirm('确定清空本机保存的所有练习和成绩吗？此操作无法撤销。')) return
+    window.localStorage.removeItem(trainingHistoryStorageKey)
+    window.localStorage.removeItem(trainingProgressStorageKey)
+    window.localStorage.removeItem(trainingLastPracticeStorageKey)
+    setTrainingHistory([])
+    setTrainingProgress({})
+    setIsSavedPractice(false)
+  }
   const practiceEntries = trainingHistory.map((savedText) => [savedText, trainingProgress[savedText] ?? { sentences: splitIntoSentences(savedText), scores: [] }])
 
   return <main className="app-shell">
-    <header className="topbar"><a className="brand" href="#top" onClick={() => setActiveView('start')}><span className="brand-mark" aria-hidden="true"><span className="echo-core" /><span className="echo-wave echo-wave-near" /><span className="echo-wave echo-wave-far" /></span><span>Echo English</span></a>{activeView !== 'start' && <button className="history-button" onClick={() => setActiveView(activeView === 'history' ? 'start' : 'history')}><History size={16} />{activeView === 'history' ? '返回首页' : '练习历史'}</button>}</header>
+    <header className="topbar"><a className="brand" href="#top" onClick={() => setActiveView('start')}><span className="brand-mark" aria-hidden="true"><span className="echo-core" /><span className="echo-wave echo-wave-near" /><span className="echo-wave echo-wave-far" /></span><span>Echo English</span></a>{activeView !== 'start' && <div className="history-actions">{activeView === 'history' && <button className="history-button" onClick={clearTrainingHistory} title="清空本机记录"><Trash2 size={16} />清空本机记录</button>}<button className="history-button" onClick={() => setActiveView(activeView === 'history' ? 'start' : 'history')}><History size={16} />{activeView === 'history' ? '返回首页' : '练习历史'}</button></div>}</header>
     {activeView === 'start' && <div className="start-score-setting"><label className="passing-score">最低分 <input type="number" min="50" max="100" value={passingScore} onChange={(event) => setPassingScore(Math.max(50, Math.min(100, Number(event.target.value) || 50)))} /> <span>分</span></label></div>}
     {activeView === 'start' ? <section className="start-page" id="top"><div className="start-heading"><p className="eyebrow">SPEAKING PRACTICE</p><h1>今天想怎样练习？</h1><p>选择一种方式，马上开始逐句跟读。</p></div><div className="start-options"><button className="start-option" onClick={generatePracticeSentences} disabled={isGenerating}><span className="start-option-icon"><Sparkles size={22} /></span><span><b>{isGenerating ? '正在准备...' : '随机 10 句话'}</b><small>从英文句库中随机挑选练习内容</small></span><ChevronRight size={20} /></button><button className="start-option" onClick={() => setActiveView('history')} disabled={!trainingHistory.length}><span className="start-option-icon"><History size={22} /></span><span><b>继续以前的练习</b><small>{trainingHistory.length ? `选择已保存的练习（最多保存 5 篇）` : '还没有可以继续的练习'}</small></span><ChevronRight size={20} /></button><button className="start-option" onClick={() => { setText(''); setNotice(''); setActiveView('input') }}><span className="start-option-icon"><Mic size={22} /></span><span><b>输入新的句子开始</b><small>粘贴英文内容，系统会自动按句拆分</small></span><ChevronRight size={20} /></button></div></section> : activeView === 'history' ? <section className="history-page" id="top"><div className="history-heading"><div><p className="eyebrow">SAVED PRACTICES</p><h1>选择以前的练习</h1><p>最多保存 5 篇练习；每句话会保留本机最高得分。</p></div><span>{practiceEntries.length} / 5 篇</span></div>{practiceEntries.length ? <div className="history-list">{practiceEntries.map(([savedText, practice], practiceIndex) => <article className="history-entry" key={savedText}><div className="history-entry-heading"><div><p className="eyebrow">练习 {practiceIndex + 1}</p><h2>{savedText.slice(0, 88)}{savedText.length > 88 ? '...' : ''}</h2></div><button className="secondary-button" onClick={() => resumePractice(savedText, practice)}>继续练习 <ChevronRight size={17} /></button></div><ol className="history-scores">{practice.sentences.map((sentence, sentenceIndex) => { const score = practice.scores[sentenceIndex]; return <li key={`${sentenceIndex}-${sentence}`}><span className="history-sentence">{sentence}</span><span className={`history-score ${score?.overall >= 90 ? 'complete' : ''}`}>{score ? `${score.overall} 分` : '未测试'}</span></li> })}</ol></article>)}</div> : <div className="history-empty"><History size={24} /><h2>还没有已保存的练习</h2><p>开始一次练习后，它会保存在这台设备的浏览器中。</p></div>}</section> : <>
     <section className={`workspace ${activeView === 'practice' ? 'practice-workspace' : 'input-workspace'}`} id="top">

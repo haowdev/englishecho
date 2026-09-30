@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@500;600;700&family=Zen+Maru+Gothic:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap');
 
 :root {
   --game-red: #e52521;
@@ -125,7 +125,7 @@ footer { color: #fff; font-weight: 700; text-shadow: 1px 1px 0 var(--game-navy);
   --sakura: #c9655f;
   --sakura-deep: #a84e4a;
   --gold: #d5a955;
-  font-family: 'Zen Maru Gothic', 'Microsoft YaHei', sans-serif;
+  font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
   color: var(--ink);
   background: var(--paper-deep);
 }
@@ -138,14 +138,14 @@ body { background: var(--paper-deep); }
 }
 .app-shell::before { display: none; }
 .topbar { background: rgba(255, 253, 246, .94); border-bottom: 1px solid #d9cfbd; box-shadow: 0 2px 10px rgba(73, 71, 55, .08); }
-.brand { color: var(--matcha-dark); font-family: 'Noto Serif JP', 'Microsoft YaHei', serif; font-size: 16px; text-shadow: none; }
+.brand { color: var(--matcha-dark); font-family: 'Noto Serif SC', 'Microsoft YaHei', serif; font-size: 16px; text-shadow: none; }
 .brand-mark { background: var(--sakura); border: 0; border-radius: 50%; box-shadow: 0 3px 8px rgba(169, 78, 74, .2); }
 .echo-core { background: #fffaf1; }.echo-wave { border-color: #fffaf1; border-left-color: transparent; }
 .history-button { color: var(--matcha-dark); background: #eef2e7; border: 1px solid #bdcdb6; border-radius: 999px; box-shadow: none; }
 .history-button:hover { background: #e1eadb; }
 
-h1, h2, h3 { color: var(--ink); font-family: 'Noto Serif JP', 'Microsoft YaHei', serif; font-weight: 600; }
-.eyebrow { color: var(--sakura); font-family: 'Zen Maru Gothic', 'Microsoft YaHei', sans-serif; font-weight: 700; letter-spacing: .08em; }
+h1, h2, h3 { color: var(--ink); font-family: 'Noto Serif SC', 'Microsoft YaHei', serif; font-weight: 600; }
+.eyebrow { color: var(--sakura); font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; font-weight: 700; letter-spacing: .08em; }
 .editor-hint, .start-heading > p:last-child, .history-heading > div > p:last-child, .record-area p, .completion-detail { color: var(--muted-ink); }
 .workspace, .history-entry, .start-option { border: 1px solid #ddd3c0; border-radius: 6px; box-shadow: 0 12px 26px rgba(86, 79, 59, .1); }
 .editor-panel, .practice-panel, .history-entry, .start-option { background: rgba(255, 253, 246, .96); }
@@ -168,7 +168,7 @@ textarea:focus { background: #fffefb; border-color: var(--matcha); box-shadow: 0
 .sentence-card.excellent { color: #35503a; background: #edf4e9; border-color: #c4d7bf; border-left-color: var(--matcha); }
 .sentence-card.in-progress { color: #44535a; background: #f0f4f0; border-color: #d1ddd0; border-left-color: #88a99a; }
 .sentence-card.needs-work { color: #70413d; background: #fbebe6; border-color: #eccbc4; border-left-color: var(--sakura); }
-.sentence-card > p { font-family: 'Noto Serif JP', Georgia, serif; font-weight: 500; }.quote-mark { color: var(--sakura); }
+.sentence-card > p { font-family: 'Source Serif 4', 'Noto Serif SC', Georgia, serif; font-weight: 500; }.quote-mark { color: var(--sakura); }
 .record-button { background: var(--sakura); border: 3px solid #fffdf6; box-shadow: 0 4px 12px rgba(169, 78, 74, .25); }.record-button.recording { background: var(--sakura-deep); }
 .notice { color: #70413d; background: #fceddf; border: 1px solid #e6c28e; }
 .transcript-box { color: var(--ink); background: #f6f8f1; border: 1px solid #d7e0ce; border-left: 5px solid var(--matcha); }
@@ -176,7 +176,7 @@ textarea:focus { background: #fffefb; border-color: var(--matcha); box-shadow: 0
 .completion-panel { background: #fffdf6; }.donut-track { stroke: #e6e1d4; }.donut-value { stroke: var(--sakura); }.completion-donut > div { color: var(--matcha-dark); }
 .history-entry-heading { border-bottom-color: #e8e0d1; }.history-scores li { border-bottom-color: #efe8dc; }.history-sentence { color: var(--ink); }.history-score { color: #7c4a37; background: #f9e8dc; border: 1px solid #edc9ad; }.history-score.complete { color: #35503a; background: #e4efdf; border-color: #c4d7bf; }.history-empty { color: var(--muted-ink); background: rgba(255, 253, 246, .85); border: 1px dashed #c9bfab; }.history-empty svg { color: var(--sakura); }.secondary-button { color: var(--matcha-dark); font-weight: 700; }.secondary-button:not(:disabled):hover { color: var(--sakura-deep); }
 .sentence-word:hover, .sentence-word.selected { background: rgba(213, 169, 85, .2); }.word-lookup { color: var(--ink); background: rgba(255, 253, 246, .88); border-color: #d8cdbc; }.word-lookup span, .word-listen-button { color: var(--matcha-dark); }.word-listen-button { background: #edf2e8; border-color: #bfceb8; }.word-listen-button:hover { background: #e1ebdb; }
-.session-controls { display: flex; align-items: center; gap: 18px; }.passing-score { display: flex; align-items: center; gap: 5px; color: var(--muted-ink); font-size: 12px; white-space: nowrap; }.passing-score input { width: 48px; padding: 5px 2px 5px 6px; color: var(--sakura-deep); text-align: center; background: #fffaf0; border: 1px solid #dfceb0; border-radius: 4px; font: 700 14px 'Zen Maru Gothic', sans-serif; }.passing-score span { color: var(--muted-ink); }
+.session-controls { display: flex; align-items: center; gap: 18px; }.passing-score { display: flex; align-items: center; gap: 5px; color: var(--muted-ink); font-size: 12px; white-space: nowrap; }.passing-score input { width: 48px; padding: 5px 2px 5px 6px; color: var(--sakura-deep); text-align: center; background: #fffaf0; border: 1px solid #dfceb0; border-radius: 4px; font: 700 14px 'Noto Sans SC', sans-serif; }.passing-score span { color: var(--muted-ink); }
 .app-shell:has(.start-score-setting) { display: flex; flex-direction: column; }.app-shell:has(.start-score-setting) .topbar { order: 1; }.app-shell:has(.start-score-setting) .start-page { order: 2; }.app-shell:has(.start-score-setting) .start-score-setting { order: 3; }
 .start-score-setting { width: min(720px, calc(100% - 48px)); margin: -28px auto 48px; }.start-score-setting .passing-score { width: fit-content; padding: 8px 11px; background: rgba(255, 253, 246, .88); border: 1px solid #ddd3c0; border-radius: 4px; }
 footer { color: var(--matcha-dark); font-weight: 700; text-shadow: none; }

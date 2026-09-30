@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fredoka:wght@400;500;600;700&display=swap');
-:root { font-family: 'Fredoka', sans-serif; color: #17233c; background: #049cd8; font-synthesis: none; text-rendering: optimizeLegibility; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+:root { font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; color: #17233c; background: #049cd8; font-synthesis: none; text-rendering: optimizeLegibility; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, textarea { font: inherit; }
