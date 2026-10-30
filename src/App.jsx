@@ -98,8 +98,9 @@ function App() {
   const [isSavedPractice, setIsSavedPractice] = useState(false)
   const [selectedWord, setSelectedWord] = useState('')
   const [wordLookup, setWordLookup] = useState({ word: '', status: 'idle', translation: '' })
+  const [isNativeDictation, setIsNativeDictation] = useState(false)
   const recognitionRef = useRef(null)
-  const microphoneStreamRef = useRef(null)
+  const nativeDictationInputRef = useRef(null)
   const recordingSilenceTimeoutRef = useRef(null)
   const finishRecordingRef = useRef(null)
   const activeSentence = sentences[activeIndex] ?? ''
@@ -112,11 +113,25 @@ function App() {
   const scoreTotal = sentenceScores.reduce((total, score) => total + (score?.overall ?? 0), 0)
   const averageScore = isPracticeComplete ? Math.round(scoreTotal / sentences.length) : 0
 
+  const stopActiveRecognition = () => {
+    clearTimeout(recordingSilenceTimeoutRef.current)
+    recordingSilenceTimeoutRef.current = null
+    finishRecordingRef.current = null
+    const current = recognitionRef.current
+    recognitionRef.current = null
+    setIsRecording(false)
+    if (current) {
+      current.onstart = null
+      current.onresult = null
+      current.onerror = null
+      current.onend = null
+      try { current.abort() } catch {}
+    }
+  }
+
   useEffect(() => () => {
     window.speechSynthesis?.cancel()
-    recognitionRef.current?.abort()
-    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
-    clearTimeout(recordingSilenceTimeoutRef.current)
+    stopActiveRecognition()
   }, [])
 
   useEffect(() => {
@@ -149,30 +164,6 @@ function App() {
     return () => controller.abort()
   }, [selectedWord])
 
-  const requestMicrophone = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setNotice('当前浏览器不支持麦克风访问。')
-      return false
-    }
-    try {
-      microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      })
-      stream.getTracks().forEach((track) => track.stop())
-      microphoneStreamRef.current = null
-      return true
-    } catch (error) {
-      const messages = {
-        NotAllowedError: '浏览器未获准使用麦克风。请点击地址栏的站点权限图标并允许麦克风访问。',
-        NotFoundError: '未检测到可用麦克风。请检查设备连接及 Windows 的输入设备设置。',
-        NotReadableError: '麦克风正被其他应用占用，或 Windows 无法访问该设备。请关闭占用程序后重试。',
-      }
-      setNotice(messages[error.name] || '无法访问默认麦克风，请检查浏览器权限和 Windows 输入设备。')
-      return false
-    }
-  }
-
   const saveTrainingText = (value) => {
     const next = [value, ...readTrainingHistory().filter((saved) => saved !== value)].slice(0, 5)
     const progress = readTrainingProgress()
@@ -188,6 +179,7 @@ function App() {
     setTrainingProgress(progress)
   }
   const restorePractice = (nextText, nextSentences) => {
+    stopActiveRecognition()
     const savedScores = readSentenceScores(nextText, nextSentences)
     const incompleteIndex = firstIncompleteSentence(savedScores, nextSentences.length, passingScore)
     setSentences(nextSentences)
@@ -264,72 +256,109 @@ function App() {
     const word = part.toLowerCase()
     return <button className={`sentence-word ${selectedWord === word ? 'selected' : ''}`} key={`${part}-${index}`} onClick={() => { setSelectedWord(word); speakWord(word) }} aria-label={`查询并朗读 ${part}`}>{part}</button>
   })
-  const startRecording = async () => {
+  const startNativeDictation = () => {
+    setIsNativeDictation(true)
+    setTranscript('')
+    setResult(null)
+    setNotice('请使用 iPhone 英文键盘上的听写按钮说出这句话，然后点击评分。')
+    requestAnimationFrame(() => nativeDictationInputRef.current?.focus())
+  }
+  const scoreNativeDictation = () => {
+    const spoken = transcript.trim()
+    if (!spoken) { setNotice('请先完成听写。'); return }
+    const attempt = scoreAttempt(activeSentence, spoken)
+    setResult(attempt)
+    saveSentenceScore(activeIndex, attempt)
+    setIsNativeDictation(false)
+    setNotice('')
+    if (attempt.overall >= passingScore && activeIndex < sentences.length - 1) {
+      const nextScores = [...sentenceScores]
+      nextScores[activeIndex] = attempt
+      const nextIndex = firstIncompleteSentence(nextScores, sentences.length, passingScore, activeIndex + 1)
+      if (nextIndex !== -1) { setActiveIndex(nextIndex); setTranscript(''); setResult(null) }
+    }
+  }
+  const startRecording = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) { setNotice('当前浏览器不支持语音识别。请使用最新版 Chrome 或 Edge。'); return }
-    setNotice('正在准备麦克风...')
-    const microphoneReady = await requestMicrophone()
-    if (!microphoneReady) return
+    if (!SpeechRecognition) { startNativeDictation(); return }
+    const hadActiveRecognition = Boolean(recognitionRef.current)
+    stopActiveRecognition()
+    window.speechSynthesis?.cancel()
+    setIsPlaying(false)
     setTranscript(''); setResult(null); setNotice('')
-    const recognition = new SpeechRecognition()
-    let latestSpoken = ''
-    let hasScored = false
-    const finishAttempt = () => {
-      clearTimeout(recordingSilenceTimeoutRef.current)
-      if (hasScored || recognitionRef.current !== recognition) return
-      if (!latestSpoken) { recognition.stop(); return }
-      hasScored = true
-      const attempt = scoreAttempt(activeSentence, latestSpoken)
-      setResult(attempt)
-      saveSentenceScore(activeIndex, attempt)
-      recognition.stop()
-      if (attempt.overall >= passingScore && activeIndex < sentences.length - 1) {
-        const nextScores = [...sentenceScores]
-        nextScores[activeIndex] = attempt
-        const nextIndex = firstIncompleteSentence(nextScores, sentences.length, passingScore, activeIndex + 1)
-        if (nextIndex !== -1) { setActiveIndex(nextIndex); setTranscript(''); setResult(null) }
+    const beginRecognition = () => {
+      const recognition = new SpeechRecognition()
+      const targetSentence = activeSentence
+      const targetIndex = activeIndex
+      let latestSpoken = ''
+      let hasScored = false
+      const finishAttempt = () => {
+        if (hasScored || recognitionRef.current !== recognition) return
+        if (!latestSpoken) {
+          stopActiveRecognition()
+          return
+        }
+        hasScored = true
+        stopActiveRecognition()
+        const attempt = scoreAttempt(targetSentence, latestSpoken)
+        setResult(attempt)
+        saveSentenceScore(targetIndex, attempt)
+        if (attempt.overall >= passingScore && targetIndex < sentences.length - 1) {
+          const nextScores = [...sentenceScores]
+          nextScores[targetIndex] = attempt
+          const nextIndex = firstIncompleteSentence(nextScores, sentences.length, passingScore, targetIndex + 1)
+          if (nextIndex !== -1) { setActiveIndex(nextIndex); setTranscript(''); setResult(null) }
+        }
+      }
+      finishRecordingRef.current = finishAttempt
+      recognition.lang = 'en-US'; recognition.interimResults = true; recognition.continuous = true; recognition.maxAlternatives = 3
+      recognition.onstart = () => { if (recognitionRef.current === recognition) setIsRecording(true) }
+      recognition.onresult = (event) => {
+        if (recognitionRef.current !== recognition) return
+        const spoken = Array.from(event.results).map((item) => {
+          const candidates = Array.from(item, (alternative) => alternative.transcript)
+          return candidates.reduce((best, candidate) => scoreAttempt(targetSentence, candidate).overall > scoreAttempt(targetSentence, best).overall ? candidate : best)
+        }).join(' ')
+        latestSpoken = spoken
+        setTranscript(spoken)
+        clearTimeout(recordingSilenceTimeoutRef.current)
+        recordingSilenceTimeoutRef.current = setTimeout(finishAttempt, 2000)
+      }
+      recognition.onerror = (event) => {
+        if (recognitionRef.current !== recognition || event.error === 'aborted') return
+        const messages = {
+          'no-speech': '没有听到可识别的语音。请靠近麦克风，用正常音量完整说一句英文；语音识别会使用浏览器或 Windows 的默认输入设备，请将测试成功的麦克风设为默认设备后重试。',
+          'audio-capture': '语音识别无法读取麦克风。请关闭正在使用麦克风的其他程序后重试。',
+          'not-allowed': '语音识别未获准访问麦克风。请在地址栏的站点权限中允许麦克风访问。',
+          'service-not-allowed': '当前浏览器不允许使用在线语音识别服务。请使用最新版 Chrome 或 Edge。',
+          network: '语音识别服务需要网络连接。请检查网络后重试。',
+        }
+        setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试。`)
+        if (!latestSpoken) stopActiveRecognition()
+      }
+      recognition.onend = () => {
+        if (recognitionRef.current !== recognition) return
+        if (!hasScored && latestSpoken) {
+          finishAttempt()
+          return
+        }
+        stopActiveRecognition()
+      }
+      recognitionRef.current = recognition
+      try {
+        recognition.start()
+      } catch {
+        stopActiveRecognition()
+        setNotice('无法启动语音识别，请稍后再试。')
       }
     }
-    finishRecordingRef.current = finishAttempt
-    recognition.lang = 'en-US'; recognition.interimResults = true; recognition.continuous = false; recognition.maxAlternatives = 3
-    recognition.onstart = () => { if (recognitionRef.current === recognition) setIsRecording(true) }
-    recognition.onresult = (event) => {
-      if (recognitionRef.current !== recognition) return
-      const spoken = Array.from(event.results).map((item) => {
-        const candidates = Array.from(item, (alternative) => alternative.transcript)
-        return candidates.reduce((best, candidate) => scoreAttempt(activeSentence, candidate).overall > scoreAttempt(activeSentence, best).overall ? candidate : best)
-      }).join(' ')
-      latestSpoken = spoken
-      setTranscript(spoken)
-      clearTimeout(recordingSilenceTimeoutRef.current)
-      recordingSilenceTimeoutRef.current = setTimeout(finishAttempt, 2000)
+    if (hadActiveRecognition) {
+      setTimeout(beginRecognition, 120)
+    } else {
+      beginRecognition()
     }
-    recognition.onerror = (event) => {
-      if (recognitionRef.current !== recognition || event.error === 'aborted') return
-      const messages = {
-        'no-speech': '没有听到可识别的语音。请靠近麦克风，用正常音量完整说一句英文；语音识别会使用浏览器或 Windows 的默认输入设备，请将测试成功的麦克风设为默认设备后重试。',
-        'audio-capture': '语音识别无法读取麦克风。请关闭正在使用麦克风的其他程序后重试。',
-        'not-allowed': '语音识别未获准访问麦克风。请在地址栏的站点权限中允许麦克风访问。',
-        'service-not-allowed': '当前浏览器不允许使用在线语音识别服务。请使用最新版 Chrome 或 Edge。',
-        network: '语音识别服务需要网络连接。请检查网络后重试。',
-      }
-      setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试。`)
-    }
-    recognition.onend = () => {
-      if (recognitionRef.current !== recognition) return
-      clearTimeout(recordingSilenceTimeoutRef.current)
-      if (!hasScored && latestSpoken) finishAttempt()
-      recognitionRef.current = null
-      setIsRecording(false)
-      finishRecordingRef.current = null
-    }
-    recognitionRef.current = recognition; recognition.start()
   }
   const retryAttempt = () => {
-    clearTimeout(recordingSilenceTimeoutRef.current)
-    recognitionRef.current?.abort()
-    recognitionRef.current = null
-    setIsRecording(false); setTranscript(''); setResult(null); setNotice('')
     startRecording()
   }
   const changeSentence = (step) => {
@@ -338,7 +367,12 @@ function App() {
       setNotice(`本句达到 ${passingScore} 分后才能进入下一句。`)
       return
     }
-    if (next >= 0 && next < sentences.length) { setActiveIndex(next); setTranscript(''); setResult(sentenceScores[next] || null) }
+    if (next >= 0 && next < sentences.length) {
+      stopActiveRecognition()
+      setActiveIndex(next)
+      setTranscript('')
+      setResult(sentenceScores[next] || null)
+    }
   }
 
   const resumePractice = (savedText, savedPractice = readTrainingProgress()[savedText]) => {
@@ -373,10 +407,11 @@ function App() {
           {activeView === 'practice' && <section className="practice-panel" aria-live="polite"><div className="session-header"><div><p className="eyebrow">SHADOWING SESSION</p><h2>逐句跟读</h2></div><div className="sentence-count">{activeIndex + 1} <span>/ {sentences.length}</span></div></div>
         {isPracticeComplete ? <section className="completion-panel"><p className="eyebrow">SESSION COMPLETE</p><h3>本次平均得分</h3><div className="completion-donut"><svg viewBox="0 0 120 120" aria-label={`平均得分 ${averageScore} 分`} role="img"><circle className="donut-track" cx="60" cy="60" r="48" pathLength="100" /><circle className="donut-value" cx="60" cy="60" r="48" pathLength="100" strokeDasharray={`${averageScore} ${100 - averageScore}`} /></svg><div><strong>{averageScore}</strong><span>分</span></div></div><p className="completion-detail">总分 {scoreTotal} ÷ {sentences.length} 句</p></section> : <><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
         <article className={`sentence-card ${sentenceStatus}`}><span className="quote-mark">“</span><p>{activeSentence ? renderSentenceWords(activeSentence) : '准备好后，从左侧输入英文文本。'}</p>{selectedWord && <div className="word-lookup" role="status"><div><span>{selectedWord}</span><strong>{wordLookup.word === selectedWord && wordLookup.status === 'loading' ? '正在查询中文释义...' : wordLookup.translation}</strong></div><button className="word-listen-button" onClick={() => speakWord(selectedWord)} title="朗读单词" aria-label={`朗读 ${selectedWord}`}><Volume2 size={18} /></button></div>}</article>
-        <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : '请允许浏览器使用麦克风'}</p></div><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence || isRecording} title={isPlaying ? '停止播放' : '听原句'} aria-label={isPlaying ? '停止播放' : '听原句'}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}</button></div>
+        <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : isNativeDictation ? '使用系统键盘听写' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : isNativeDictation ? '完成后点击评分' : '请允许浏览器使用麦克风'}</p></div><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence || isRecording} title={isPlaying ? '停止播放' : '听原句'} aria-label={isPlaying ? '停止播放' : '听原句'}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}</button></div>
+        {isNativeDictation && <div className="native-dictation"><textarea ref={nativeDictationInputRef} value={transcript} onChange={(event) => setTranscript(event.target.value)} rows="3" lang="en-US" autoCapitalize="sentences" placeholder="Use the English keyboard dictation..." aria-label="系统键盘听写结果" /><div><button className="secondary-button" onClick={() => { setIsNativeDictation(false); setNotice('') }}>取消</button><button className="primary-button" onClick={scoreNativeDictation}>评分 <ChevronRight size={17} /></button></div></div>}
         {notice && <p className="notice">{notice}</p>}
         {transcript && <div className="transcript-box"><p className="eyebrow">识别到的内容</p><p>{transcript}</p></div>}
-        {result && <section className="score-card"><div className="score-ring"><strong>{result.overall}</strong><span>分</span></div><div className="score-copy"><p className="eyebrow">本句表现</p><h3>{result.overall >= passingScore ? '已达到通关标准' : '再试一次，会更好'}</h3><div className="metrics"><span>词汇准确度 <b>{result.accuracy}%</b></span><span>节奏匹配 <b>{result.pace}%</b></span></div></div>{result.overall < passingScore ? <button className="secondary-button" onClick={retryAttempt}><RotateCcw size={17} />重新挑战</button> : <button className="icon-button" onClick={() => { setTranscript(''); setResult(null) }} title="重新跟读" aria-label="重新跟读"><RotateCcw size={19} /></button>}</section>}
+        {result && <section className="score-card"><div className="score-ring"><strong>{result.overall}</strong><span>分</span></div><div className="score-copy"><p className="eyebrow">本句表现</p><h3>{result.overall >= passingScore ? '已达到通关标准' : '再试一次，会更好'}</h3><div className="metrics"><span>词汇准确度 <b>{result.accuracy}%</b></span><span>节奏匹配 <b>{result.pace}%</b></span></div></div>{result.overall < passingScore ? <button className="secondary-button" onClick={retryAttempt}><RotateCcw size={17} />重新挑战</button> : <button className="icon-button" onClick={retryAttempt} title="重新跟读" aria-label="重新跟读"><RotateCcw size={19} /></button>}</section>}
         <nav className="navigation" aria-label="切换练习句子"><button className="sentence-nav-button previous" onClick={() => changeSentence(-1)} disabled={isRecording || activeIndex === 0}><ChevronLeft size={18} /><span>上一句</span></button><button className="sentence-nav-button next" onClick={() => changeSentence(1)} disabled={isRecording || activeIndex === sentences.length - 1 || !canProceedToNext}><span>下一句</span><ChevronRight size={18} /></button></nav></>}
       </section>}
     </section>
