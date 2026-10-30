@@ -100,6 +100,16 @@ function App() {
   const [wordLookup, setWordLookup] = useState({ word: '', status: 'idle', translation: '' })
   const [isNativeDictation, setIsNativeDictation] = useState(false)
   const recognitionRef = useRef(null)
+  const isSessionAliveRef = useRef(false)
+  const isCapturingRef = useRef(false)
+  const attemptTargetRef = useRef({ sentence: '', index: 0 })
+  const latestAllWordsRef = useRef([])
+  const latestFullTextRef = useRef('')
+  const baselineWordsRef = useRef([])
+  const baselineFullTextRef = useRef('')
+  const latestAttemptSpokenRef = useRef('')
+  const isPlayingRef = useRef(false)
+  const ttsIgnoreUntilRef = useRef(0)
   const nativeDictationInputRef = useRef(null)
   const recordingSilenceTimeoutRef = useRef(null)
   const finishRecordingRef = useRef(null)
@@ -113,26 +123,64 @@ function App() {
   const scoreTotal = sentenceScores.reduce((total, score) => total + (score?.overall ?? 0), 0)
   const averageScore = isPracticeComplete ? Math.round(scoreTotal / sentences.length) : 0
 
-  const stopActiveRecognition = () => {
+  const practiceStateRef = useRef({
+    text,
+    sentences,
+    activeIndex,
+    activeSentence,
+    sentenceScores,
+    passingScore,
+    isSavedPractice,
+  })
+  practiceStateRef.current = {
+    text,
+    sentences,
+    activeIndex,
+    activeSentence,
+    sentenceScores,
+    passingScore,
+    isSavedPractice,
+  }
+
+  const pauseAttemptCapture = () => {
     clearTimeout(recordingSilenceTimeoutRef.current)
     recordingSilenceTimeoutRef.current = null
+    isCapturingRef.current = false
+    setIsRecording(false)
+    baselineWordsRef.current = [...latestAllWordsRef.current]
+    baselineFullTextRef.current = latestFullTextRef.current
+    latestAttemptSpokenRef.current = ''
+  }
+
+  const closeRecognitionSession = () => {
+    pauseAttemptCapture()
     finishRecordingRef.current = null
+    isSessionAliveRef.current = false
+    latestAllWordsRef.current = []
+    latestFullTextRef.current = ''
+    baselineWordsRef.current = []
+    baselineFullTextRef.current = ''
     const current = recognitionRef.current
     recognitionRef.current = null
-    setIsRecording(false)
     if (current) {
       current.onstart = null
       current.onresult = null
       current.onerror = null
       current.onend = null
-      try { current.abort() } catch {}
+      try { current.stop() } catch {}
     }
   }
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel()
-    stopActiveRecognition()
+    closeRecognitionSession()
   }, [])
+
+  useEffect(() => {
+    if (activeView !== 'practice' || isPracticeComplete) {
+      closeRecognitionSession()
+    }
+  }, [activeView, isPracticeComplete])
 
   useEffect(() => {
     setSelectedWord('')
@@ -179,7 +227,7 @@ function App() {
     setTrainingProgress(progress)
   }
   const restorePractice = (nextText, nextSentences) => {
-    stopActiveRecognition()
+    closeRecognitionSession()
     const savedScores = readSentenceScores(nextText, nextSentences)
     const incompleteIndex = firstIncompleteSentence(savedScores, nextSentences.length, passingScore)
     setSentences(nextSentences)
@@ -190,13 +238,14 @@ function App() {
     setNotice(incompleteIndex === -1 ? `本篇练习的所有句子均已达到 ${passingScore} 分。` : savedScores.length ? `已恢复本机成绩，从第 ${incompleteIndex + 1} 句继续。` : `${nextSentences.length} 个句子已准备好。`)
   }
   const saveSentenceScore = (sentenceIndex, attempt) => {
+    const { text: currentText, sentences: currentSentences, isSavedPractice: currentIsSaved } = practiceStateRef.current
     setSentenceScores((previous) => {
       const next = [...previous]
       const savedAttempt = next[sentenceIndex]?.overall > attempt.overall ? next[sentenceIndex] : attempt
       next[sentenceIndex] = savedAttempt
-      if (!isSavedPractice) return next
+      if (!currentIsSaved) return next
       const progress = readTrainingProgress()
-      progress[text] = { sentences, scores: next }
+      progress[currentText] = { sentences: currentSentences, scores: next }
       try { window.localStorage.setItem(trainingProgressStorageKey, JSON.stringify(progress)) } catch {}
       setTrainingProgress(progress)
       return next
@@ -241,7 +290,9 @@ function App() {
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(activeSentence)
     utterance.lang = 'en-US'; utterance.rate = 0.84
-    utterance.onstart = () => setIsPlaying(true); utterance.onend = () => setIsPlaying(false); utterance.onerror = () => setIsPlaying(false)
+    utterance.onstart = () => { isPlayingRef.current = true; setIsPlaying(true) }
+    utterance.onend = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 600; setIsPlaying(false) }
+    utterance.onerror = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 600; setIsPlaying(false) }
     window.speechSynthesis.speak(utterance)
   }
   const speakWord = (word) => {
@@ -249,6 +300,9 @@ function App() {
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(word)
     utterance.lang = 'en-US'; utterance.rate = 0.78
+    utterance.onstart = () => { isPlayingRef.current = true }
+    utterance.onend = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 500 }
+    utterance.onerror = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 500 }
     window.speechSynthesis.speak(utterance)
   }
   const renderSentenceWords = (sentence) => (sentence.match(/[A-Za-z]+(?:'[A-Za-z]+)?|[^A-Za-z]+/g) ?? []).map((part, index) => {
@@ -278,84 +332,183 @@ function App() {
       if (nextIndex !== -1) { setActiveIndex(nextIndex); setTranscript(''); setResult(null) }
     }
   }
+  const extractCurrentAttemptText = (fullText, wordTokens) => {
+    const baselineWords = baselineWordsRef.current
+    const B = baselineWords.length
+    if (B === 0) return fullText.trim()
+    if (fullText === baselineFullTextRef.current) return ''
+
+    const tailLen = Math.min(3, B)
+    const tail = baselineWords.slice(B - tailLen)
+    for (const offset of [0, -1, 1, -2, 2]) {
+      const endIdx = B + offset
+      if (endIdx < tailLen || endIdx > wordTokens.length) continue
+      let matches = true
+      for (let i = 0; i < tailLen; i += 1) {
+        if (wordTokens[endIdx - tailLen + i].norm !== tail[i]) {
+          matches = false
+          break
+        }
+      }
+      if (matches) {
+        if (endIdx >= wordTokens.length) {
+          baselineWordsRef.current = wordTokens.map((t) => t.norm)
+          baselineFullTextRef.current = fullText
+          return ''
+        }
+        return fullText.slice(wordTokens[endIdx].index).trim()
+      }
+    }
+
+    if (wordTokens.length < B || wordTokens[0]?.norm !== baselineWords[0]) {
+      baselineWordsRef.current = []
+      baselineFullTextRef.current = ''
+      return fullText.trim()
+    }
+
+    if (wordTokens.length > B) {
+      return fullText.slice(wordTokens[B].index).trim()
+    }
+
+    baselineWordsRef.current = wordTokens.map((t) => t.norm)
+    baselineFullTextRef.current = fullText
+    return ''
+  }
+
+  const finishAttempt = () => {
+    clearTimeout(recordingSilenceTimeoutRef.current)
+    recordingSilenceTimeoutRef.current = null
+    if (!isCapturingRef.current) return
+    const spoken = latestAttemptSpokenRef.current.trim()
+    isCapturingRef.current = false
+    setIsRecording(false)
+    baselineWordsRef.current = [...latestAllWordsRef.current]
+    baselineFullTextRef.current = latestFullTextRef.current
+    latestAttemptSpokenRef.current = ''
+    if (!spoken) return
+
+    const { sentence: targetSentence, index: targetIndex } = attemptTargetRef.current
+    const { sentences: currentSentences, sentenceScores: currentScores, passingScore: currentPassingScore } = practiceStateRef.current
+    const attempt = scoreAttempt(targetSentence, spoken)
+    setResult(attempt)
+    saveSentenceScore(targetIndex, attempt)
+    if (attempt.overall >= currentPassingScore && targetIndex < currentSentences.length - 1) {
+      const nextScores = [...currentScores]
+      nextScores[targetIndex] = attempt
+      const nextIndex = firstIncompleteSentence(nextScores, currentSentences.length, currentPassingScore, targetIndex + 1)
+      if (nextIndex !== -1) {
+        setActiveIndex(nextIndex)
+        setTranscript('')
+        setResult(null)
+      }
+    }
+  }
+  finishRecordingRef.current = finishAttempt
+
   const startRecording = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) { startNativeDictation(); return }
-    const hadActiveRecognition = Boolean(recognitionRef.current)
-    stopActiveRecognition()
-    window.speechSynthesis?.cancel()
-    setIsPlaying(false)
+    if (isPlayingRef.current) {
+      window.speechSynthesis?.cancel()
+      isPlayingRef.current = false
+      ttsIgnoreUntilRef.current = Date.now() + 500
+      setIsPlaying(false)
+    }
+    clearTimeout(recordingSilenceTimeoutRef.current)
+    recordingSilenceTimeoutRef.current = null
+    attemptTargetRef.current = { sentence: activeSentence, index: activeIndex }
+    baselineWordsRef.current = [...latestAllWordsRef.current]
+    baselineFullTextRef.current = latestFullTextRef.current
+    latestAttemptSpokenRef.current = ''
     setTranscript(''); setResult(null); setNotice('')
-    const beginRecognition = () => {
-      const recognition = new SpeechRecognition()
-      const targetSentence = activeSentence
-      const targetIndex = activeIndex
-      let latestSpoken = ''
-      let hasScored = false
-      const finishAttempt = () => {
-        if (hasScored || recognitionRef.current !== recognition) return
-        if (!latestSpoken) {
-          stopActiveRecognition()
-          return
-        }
-        hasScored = true
-        stopActiveRecognition()
-        const attempt = scoreAttempt(targetSentence, latestSpoken)
-        setResult(attempt)
-        saveSentenceScore(targetIndex, attempt)
-        if (attempt.overall >= passingScore && targetIndex < sentences.length - 1) {
-          const nextScores = [...sentenceScores]
-          nextScores[targetIndex] = attempt
-          const nextIndex = firstIncompleteSentence(nextScores, sentences.length, passingScore, targetIndex + 1)
-          if (nextIndex !== -1) { setActiveIndex(nextIndex); setTranscript(''); setResult(null) }
-        }
+
+    if (recognitionRef.current && isSessionAliveRef.current) {
+      isCapturingRef.current = true
+      setIsRecording(true)
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'en-US'
+    recognition.interimResults = true
+    recognition.continuous = true
+    recognition.maxAlternatives = 1
+
+    recognition.onstart = () => {
+      if (recognitionRef.current !== recognition) return
+      isSessionAliveRef.current = true
+      if (isCapturingRef.current) setIsRecording(true)
+    }
+
+    recognition.onresult = (event) => {
+      if (recognitionRef.current !== recognition) return
+      const fullText = Array.from(event.results)
+        .map((item) => item[0]?.transcript ?? '')
+        .join(' ')
+        .trim()
+      const wordTokens = Array.from(fullText.matchAll(/[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?/g), (match) => ({
+        norm: match[0].toLowerCase(),
+        index: match.index,
+      }))
+      latestAllWordsRef.current = wordTokens.map((t) => t.norm)
+      latestFullTextRef.current = fullText
+
+      if (!isCapturingRef.current || isPlayingRef.current || Date.now() < ttsIgnoreUntilRef.current) {
+        baselineWordsRef.current = [...latestAllWordsRef.current]
+        baselineFullTextRef.current = fullText
+        return
       }
-      finishRecordingRef.current = finishAttempt
-      recognition.lang = 'en-US'; recognition.interimResults = true; recognition.continuous = true; recognition.maxAlternatives = 3
-      recognition.onstart = () => { if (recognitionRef.current === recognition) setIsRecording(true) }
-      recognition.onresult = (event) => {
-        if (recognitionRef.current !== recognition) return
-        const spoken = Array.from(event.results).map((item) => {
-          const candidates = Array.from(item, (alternative) => alternative.transcript)
-          return candidates.reduce((best, candidate) => scoreAttempt(targetSentence, candidate).overall > scoreAttempt(targetSentence, best).overall ? candidate : best)
-        }).join(' ')
-        latestSpoken = spoken
-        setTranscript(spoken)
+
+      const attemptSpoken = extractCurrentAttemptText(fullText, wordTokens)
+      if (!attemptSpoken) return
+      if (attemptSpoken !== latestAttemptSpokenRef.current) {
+        latestAttemptSpokenRef.current = attemptSpoken
+        setTranscript(attemptSpoken)
         clearTimeout(recordingSilenceTimeoutRef.current)
-        recordingSilenceTimeoutRef.current = setTimeout(finishAttempt, 2000)
-      }
-      recognition.onerror = (event) => {
-        if (recognitionRef.current !== recognition || event.error === 'aborted') return
-        const messages = {
-          'no-speech': '没有听到可识别的语音。请靠近麦克风，用正常音量完整说一句英文；语音识别会使用浏览器或 Windows 的默认输入设备，请将测试成功的麦克风设为默认设备后重试。',
-          'audio-capture': '语音识别无法读取麦克风。请关闭正在使用麦克风的其他程序后重试。',
-          'not-allowed': '语音识别未获准访问麦克风。请在地址栏的站点权限中允许麦克风访问。',
-          'service-not-allowed': '当前浏览器不允许使用在线语音识别服务。请使用最新版 Chrome 或 Edge。',
-          network: '语音识别服务需要网络连接。请检查网络后重试。',
-        }
-        setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试。`)
-        if (!latestSpoken) stopActiveRecognition()
-      }
-      recognition.onend = () => {
-        if (recognitionRef.current !== recognition) return
-        if (!hasScored && latestSpoken) {
-          finishAttempt()
-          return
-        }
-        stopActiveRecognition()
-      }
-      recognitionRef.current = recognition
-      try {
-        recognition.start()
-      } catch {
-        stopActiveRecognition()
-        setNotice('无法启动语音识别，请稍后再试。')
+        recordingSilenceTimeoutRef.current = setTimeout(() => finishRecordingRef.current?.(), 2000)
       }
     }
-    if (hadActiveRecognition) {
-      setTimeout(beginRecognition, 120)
-    } else {
-      beginRecognition()
+
+    recognition.onerror = (event) => {
+      if (recognitionRef.current !== recognition || event.error === 'aborted') return
+      if (!isCapturingRef.current && event.error === 'no-speech') return
+      const messages = {
+        'no-speech': '没有听到可识别的语音。请靠近麦克风，用正常音量完整说一句英文；语音识别会使用浏览器或系统的默认输入设备，请重试。',
+        'audio-capture': '语音识别无法读取麦克风。请关闭正在使用麦克风的其他程序后重试。',
+        'not-allowed': '语音识别未获准访问麦克风。请在地址栏的站点权限中允许麦克风访问。',
+        'service-not-allowed': '当前浏览器不允许使用在线语音识别服务。请检查系统听写或语音识别权限。',
+        network: '语音识别服务需要网络连接。请检查网络后重试。',
+      }
+      if (isCapturingRef.current) {
+        setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试。`)
+        pauseAttemptCapture()
+      }
+    }
+
+    recognition.onend = () => {
+      if (recognitionRef.current !== recognition) return
+      if (isCapturingRef.current && latestAttemptSpokenRef.current.trim()) {
+        finishRecordingRef.current?.()
+      } else {
+        pauseAttemptCapture()
+      }
+      recognitionRef.current = null
+      isSessionAliveRef.current = false
+      latestAllWordsRef.current = []
+      latestFullTextRef.current = ''
+      baselineWordsRef.current = []
+      baselineFullTextRef.current = ''
+    }
+
+    recognitionRef.current = recognition
+    isSessionAliveRef.current = true
+    isCapturingRef.current = true
+    setIsRecording(true)
+    try {
+      recognition.start()
+    } catch {
+      closeRecognitionSession()
+      setNotice('无法启动语音识别，请稍后再试。')
     }
   }
   const retryAttempt = () => {
@@ -368,7 +521,7 @@ function App() {
       return
     }
     if (next >= 0 && next < sentences.length) {
-      stopActiveRecognition()
+      pauseAttemptCapture()
       setActiveIndex(next)
       setTranscript('')
       setResult(sentenceScores[next] || null)
