@@ -84,7 +84,6 @@ function App() {
   const [text, setText] = useState('')
   const [sentences, setSentences] = useState([])
   const [activeIndex, setActiveIndex] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
@@ -100,6 +99,7 @@ function App() {
   const [wordLookup, setWordLookup] = useState({ word: '', status: 'idle', translation: '' })
   const [isNativeDictation, setIsNativeDictation] = useState(false)
   const recognitionRef = useRef(null)
+  const wordAudioRef = useRef(null)
   const nativeDictationInputRef = useRef(null)
   const recordingSilenceTimeoutRef = useRef(null)
   const finishRecordingRef = useRef(null)
@@ -107,7 +107,6 @@ function App() {
   const activeScore = sentenceScores[activeIndex]?.overall
   const sentenceStatus = activeScore === undefined ? 'unread' : activeScore >= passingScore ? 'excellent' : activeScore <= 70 ? 'needs-work' : 'in-progress'
   const progress = sentences.length ? ((activeIndex + 1) / sentences.length) * 100 : 0
-  const scoredSentenceCount = sentenceScores.filter((score) => typeof score?.overall === 'number').length
   const isPracticeComplete = sentences.length > 0 && sentences.every((_, index) => sentenceScores[index]?.overall >= passingScore)
   const canProceedToNext = activeScore >= passingScore
   const scoreTotal = sentenceScores.reduce((total, score) => total + (score?.overall ?? 0), 0)
@@ -152,6 +151,7 @@ function App() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        wordAudioRef.current?.pause()
         window.speechSynthesis?.cancel()
         closeRecognitionSession()
       }
@@ -159,6 +159,7 @@ function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
+      wordAudioRef.current?.pause()
       window.speechSynthesis?.cancel()
       closeRecognitionSession()
     }
@@ -273,24 +274,38 @@ function App() {
     setIsGenerating(false)
     if (nextSentences.length) setActiveView('practice')
   }
-  const speak = () => {
-    if (!activeSentence || !window.speechSynthesis) return
-    closeRecognitionSession()
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(activeSentence)
-    utterance.lang = 'en-US'; utterance.rate = 0.84
-    utterance.onstart = () => setIsPlaying(true)
-    utterance.onend = () => setIsPlaying(false)
-    utterance.onerror = () => setIsPlaying(false)
-    window.speechSynthesis.speak(utterance)
+  const speakWordWithTTS = (word) => {
+    if (!window.speechSynthesis) return
+    try {
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.resume?.()
+      const utterance = new SpeechSynthesisUtterance(word)
+      utterance.lang = 'en-US'
+      utterance.rate = 0.85
+      const voices = window.speechSynthesis.getVoices?.() ?? []
+      const englishVoice = voices.find((v) => v.lang === 'en-US' || v.lang === 'en_US') || voices.find((v) => v.lang?.startsWith('en'))
+      if (englishVoice) utterance.voice = englishVoice
+      window.speechSynthesis.speak(utterance)
+    } catch {}
   }
   const speakWord = (word) => {
-    if (!word || !window.speechSynthesis) return
+    if (!word) return
     closeRecognitionSession()
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(word)
-    utterance.lang = 'en-US'; utterance.rate = 0.78
-    window.speechSynthesis.speak(utterance)
+    window.speechSynthesis?.cancel()
+    try {
+      if (!wordAudioRef.current) {
+        wordAudioRef.current = new Audio()
+      }
+      const audio = wordAudioRef.current
+      audio.pause()
+      audio.src = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=2`
+      const playPromise = audio.play()
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => speakWordWithTTS(word))
+      }
+    } catch {
+      speakWordWithTTS(word)
+    }
   }
   const renderSentenceWords = (sentence) => (sentence.match(/[A-Za-z]+(?:'[A-Za-z]+)?|[^A-Za-z]+/g) ?? []).map((part, index) => {
     if (!/^[A-Za-z]+(?:'[A-Za-z]+)?$/.test(part)) return <span key={`${part}-${index}`}>{part}</span>
@@ -299,8 +314,8 @@ function App() {
   })
   const startNativeDictation = () => {
     closeRecognitionSession()
+    wordAudioRef.current?.pause()
     window.speechSynthesis?.cancel()
-    setIsPlaying(false)
     setIsNativeDictation(true)
     setTranscript('')
     setResult(null)
@@ -326,8 +341,8 @@ function App() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) { startNativeDictation(); return }
     closeRecognitionSession()
+    wordAudioRef.current?.pause()
     window.speechSynthesis?.cancel()
-    setIsPlaying(false)
     setIsNativeDictation(false)
     setTranscript(''); setResult(null); setNotice('')
 
@@ -521,7 +536,7 @@ function App() {
           {activeView === 'practice' && <section className="practice-panel" aria-live="polite"><div className="session-header"><div><p className="eyebrow">SHADOWING SESSION</p><h2>逐句跟读</h2></div><div className="sentence-count">{activeIndex + 1} <span>/ {sentences.length}</span></div></div>
         {isPracticeComplete ? <section className="completion-panel"><p className="eyebrow">SESSION COMPLETE</p><h3>本次平均得分</h3><div className="completion-donut"><svg viewBox="0 0 120 120" aria-label={`平均得分 ${averageScore} 分`} role="img"><circle className="donut-track" cx="60" cy="60" r="48" pathLength="100" /><circle className="donut-value" cx="60" cy="60" r="48" pathLength="100" strokeDasharray={`${averageScore} ${100 - averageScore}`} /></svg><div><strong>{averageScore}</strong><span>分</span></div></div><p className="completion-detail">总分 {scoreTotal} ÷ {sentences.length} 句</p></section> : <><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
         <article className={`sentence-card ${sentenceStatus}`}><span className="quote-mark">“</span><p>{activeSentence ? renderSentenceWords(activeSentence) : '准备好后，从左侧输入英文文本。'}</p>{selectedWord && <div className="word-lookup" role="status"><div><span>{selectedWord}</span><strong>{wordLookup.word === selectedWord && wordLookup.status === 'loading' ? '正在查询中文释义...' : wordLookup.translation}</strong></div><button className="word-listen-button" onClick={() => speakWord(selectedWord)} title="朗读单词" aria-label={`朗读 ${selectedWord}`}><Volume2 size={18} /></button></div>}</article>
-        <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : isNativeDictation ? '使用系统键盘听写' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : isNativeDictation ? '完成后点击评分' : '请允许浏览器使用麦克风，或用右侧键盘听写'}</p></div><div className="record-controls"><button className={`dictation-toggle-button ${isNativeDictation ? 'active' : ''}`} onClick={() => { if (isNativeDictation) { setIsNativeDictation(false); setNotice('') } else { startNativeDictation() } }} disabled={!activeSentence || isRecording} title={isNativeDictation ? '关闭键盘听写' : '使用键盘听写'} aria-label={isNativeDictation ? '关闭键盘听写' : '使用键盘听写'}><Keyboard size={18} /></button><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence || isRecording} title={isPlaying ? '停止播放' : '听原句'} aria-label={isPlaying ? '停止播放' : '听原句'}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}</button></div></div>
+        <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : isNativeDictation ? '使用系统键盘听写' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : isNativeDictation ? '完成后点击评分' : '请允许浏览器使用麦克风，或用右侧键盘听写'}</p></div><div className="record-controls"><button className={`dictation-toggle-button ${isNativeDictation ? 'active' : ''}`} onClick={() => { if (isNativeDictation) { setIsNativeDictation(false); setNotice('') } else { startNativeDictation() } }} disabled={!activeSentence || isRecording} title={isNativeDictation ? '关闭键盘听写' : '使用键盘听写'} aria-label={isNativeDictation ? '关闭键盘听写' : '使用键盘听写'}><Keyboard size={18} /></button></div></div>
         {isNativeDictation && <div className="native-dictation"><textarea ref={nativeDictationInputRef} value={transcript} onChange={(event) => setTranscript(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); scoreNativeDictation() } }} rows="3" lang="en-US" autoCapitalize="sentences" placeholder="Use the English keyboard dictation..." aria-label="系统键盘听写结果" /><div><button className="secondary-button" onClick={() => { setIsNativeDictation(false); setNotice('') }}>取消</button><button className="primary-button" onClick={scoreNativeDictation}>评分 <ChevronRight size={17} /></button></div></div>}
         {notice && <p className="notice">{notice}</p>}
         {transcript && <div className="transcript-box"><p className="eyebrow">识别到的内容</p><p>{transcript}</p></div>}
