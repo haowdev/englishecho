@@ -99,6 +99,7 @@ function App() {
   const [wordLookup, setWordLookup] = useState({ word: '', status: 'idle', translation: '' })
   const [isNativeDictation, setIsNativeDictation] = useState(false)
   const recognitionRef = useRef(null)
+  const microphoneStreamRef = useRef(null)
   const wordAudioRef = useRef(null)
   const nativeDictationInputRef = useRef(null)
   const recordingSilenceTimeoutRef = useRef(null)
@@ -135,16 +136,37 @@ function App() {
     clearTimeout(recordingSilenceTimeoutRef.current)
     recordingSilenceTimeoutRef.current = null
     finishRecordingRef.current = null
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
+    microphoneStreamRef.current = null
     setIsRecording(false)
     const current = recognitionRef.current
     recognitionRef.current = null
     if (current) {
-      current.onstart = null
-      current.onresult = null
-      current.onerror = null
-      current.onend = null
-      try { current.stop() } catch {}
       try { current.abort() } catch {}
+    }
+  }
+
+  const requestMicrophone = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setNotice('当前浏览器不支持麦克风访问。')
+      return false
+    }
+    try {
+      microphoneStreamRef.current?.getTracks().forEach((track) => track.stop())
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      })
+      stream.getTracks().forEach((track) => track.stop())
+      microphoneStreamRef.current = null
+      return true
+    } catch (error) {
+      const messages = {
+        NotAllowedError: '浏览器未获准使用麦克风。请点击地址栏的站点权限图标并允许麦克风访问。',
+        NotFoundError: '未检测到可用麦克风。请检查设备连接及输入设备设置。',
+        NotReadableError: '麦克风正被其他应用占用，请关闭占用程序后重试。',
+      }
+      setNotice(messages[error.name] || '无法访问默认麦克风，请检查浏览器权限。')
+      return false
     }
   }
 
@@ -337,13 +359,20 @@ function App() {
       if (nextIndex !== -1) { setActiveIndex(nextIndex); setTranscript(''); setResult(null) }
     }
   }
-  const startRecording = () => {
+  const startRecording = async () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) { startNativeDictation(); return }
-    closeRecognitionSession()
+    clearTimeout(recordingSilenceTimeoutRef.current)
+    recordingSilenceTimeoutRef.current = null
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    finishRecordingRef.current = null
+    setIsRecording(false)
     wordAudioRef.current?.pause()
-    window.speechSynthesis?.cancel()
     setIsNativeDictation(false)
+    setNotice('正在准备麦克风...')
+    const microphoneReady = await requestMicrophone()
+    if (!microphoneReady) return
     setTranscript(''); setResult(null); setNotice('')
 
     const recognition = new SpeechRecognition()
@@ -351,23 +380,22 @@ function App() {
     const targetIndex = activeIndex
     let latestSpoken = ''
     let hasScored = false
-    let isStopping = false
 
-    const finalizeScore = () => {
+    const finishAttempt = () => {
       clearTimeout(recordingSilenceTimeoutRef.current)
       recordingSilenceTimeoutRef.current = null
       if (hasScored || recognitionRef.current !== recognition) return
-      const spoken = latestSpoken.trim()
-      if (!spoken) {
-        closeRecognitionSession()
+      if (!latestSpoken.trim()) {
+        try { recognition.stop() } catch {}
         return
       }
       hasScored = true
-      closeRecognitionSession()
+      setIsRecording(false)
       const { sentences: currentSentences, sentenceScores: currentScores, passingScore: currentPassingScore } = practiceStateRef.current
-      const attempt = scoreAttempt(targetSentence, spoken)
+      const attempt = scoreAttempt(targetSentence, latestSpoken)
       setResult(attempt)
       saveSentenceScore(targetIndex, attempt)
+      try { recognition.stop() } catch {}
       if (attempt.overall >= currentPassingScore && targetIndex < currentSentences.length - 1) {
         const nextScores = [...currentScores]
         nextScores[targetIndex] = attempt
@@ -380,46 +408,15 @@ function App() {
       }
     }
 
-    const requestStop = () => {
-      clearTimeout(recordingSilenceTimeoutRef.current)
-      recordingSilenceTimeoutRef.current = null
-      if (recognitionRef.current !== recognition) return
-      if (latestSpoken.trim()) {
-        finalizeScore()
-        return
-      }
-      if (isStopping) {
-        closeRecognitionSession()
-        return
-      }
-      isStopping = true
-      try {
-        recognition.stop()
-      } catch {
-        closeRecognitionSession()
-      }
-      recordingSilenceTimeoutRef.current = setTimeout(() => {
-        if (recognitionRef.current === recognition) finalizeScore()
-      }, 800)
-    }
-
-    finishRecordingRef.current = requestStop
+    finishRecordingRef.current = finishAttempt
 
     recognition.lang = 'en-US'
     recognition.interimResults = true
-    recognition.continuous = true
+    recognition.continuous = false
     recognition.maxAlternatives = 3
 
     recognition.onstart = () => {
-      if (recognitionRef.current !== recognition) return
-      setIsRecording(true)
-      clearTimeout(recordingSilenceTimeoutRef.current)
-      recordingSilenceTimeoutRef.current = setTimeout(() => {
-        if (recognitionRef.current === recognition && !latestSpoken.trim()) {
-          closeRecognitionSession()
-          setNotice('未检测到语音输入，已自动退出录音。')
-        }
-      }, 8000)
+      if (recognitionRef.current === recognition) setIsRecording(true)
     }
 
     recognition.onresult = (event) => {
@@ -438,22 +435,11 @@ function App() {
       latestSpoken = spoken
       setTranscript(spoken)
       clearTimeout(recordingSilenceTimeoutRef.current)
-      const targetWordCount = normalizeWords(targetSentence).length
-      const spokenWordCount = normalizeWords(spoken).length
-      const isComplete = targetWordCount > 0 && spokenWordCount >= targetWordCount
-      if (isStopping) {
-        finalizeScore()
-      } else {
-        recordingSilenceTimeoutRef.current = setTimeout(finalizeScore, isComplete ? 800 : 1500)
-      }
+      recordingSilenceTimeoutRef.current = setTimeout(finishAttempt, 2000)
     }
 
     recognition.onerror = (event) => {
       if (recognitionRef.current !== recognition || event.error === 'aborted') return
-      if (latestSpoken.trim()) {
-        finalizeScore()
-        return
-      }
       const messages = {
         'no-speech': '没有听到可识别的语音。请靠近麦克风重试，或点击右侧键盘图标使用系统键盘听写。',
         'audio-capture': '语音识别无法读取麦克风。请关闭正在使用麦克风的其他程序，或切换键盘听写。',
@@ -461,33 +447,38 @@ function App() {
         'service-not-allowed': '当前浏览器限制了网页语音识别服务，已为您切换至系统键盘听写模式。',
         network: '语音识别服务需要网络连接。请检查网络后重试，或切换键盘听写。',
       }
-      closeRecognitionSession()
       if (event.error === 'service-not-allowed') {
         startNativeDictation()
         return
       }
-      setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试或切换键盘听写。`)
+      setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试。`)
     }
 
     recognition.onend = () => {
       if (recognitionRef.current !== recognition) return
-      if (!hasScored && latestSpoken.trim()) {
-        finalizeScore()
-        return
-      }
-      closeRecognitionSession()
+      clearTimeout(recordingSilenceTimeoutRef.current)
+      if (!hasScored && latestSpoken.trim()) finishAttempt()
+      recognitionRef.current = null
+      setIsRecording(false)
+      finishRecordingRef.current = null
     }
 
     recognitionRef.current = recognition
-    setIsRecording(true)
     try {
       recognition.start()
     } catch {
       closeRecognitionSession()
-      startNativeDictation()
+      setNotice('无法启动语音识别，请重试或使用右侧键盘听写。')
     }
   }
   const retryAttempt = () => {
+    clearTimeout(recordingSilenceTimeoutRef.current)
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    setIsRecording(false)
+    setTranscript('')
+    setResult(null)
+    setNotice('')
     startRecording()
   }
   const changeSentence = (step) => {
