@@ -645,25 +645,40 @@ textarea:focus {
   }
 }
 
-.listen-button {
+.record-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.listen-button,
+.dictation-toggle-button {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
   width: 44px;
   height: 44px;
-  margin-left: auto;
   padding: 0;
   color: var(--apple-blue);
   background: #ffffff;
   border: 1px solid var(--apple-border);
   border-radius: 50%;
   box-shadow: var(--apple-shadow-sm);
+  transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-.listen-button:hover:not(:disabled) {
+.listen-button:hover:not(:disabled),
+.dictation-toggle-button:hover:not(:disabled) {
   background: var(--apple-blue-tint);
   border-color: rgba(0, 113, 227, 0.2);
   transform: scale(1.04);
+}
+
+.dictation-toggle-button.active {
+  color: #ffffff;
+  background: var(--apple-blue);
+  border-color: var(--apple-blue);
 }
 
 .native-dictation {

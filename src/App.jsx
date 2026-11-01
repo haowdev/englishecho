@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, History, Mic, Pause, RotateCcw, Sparkles, Trash2, Volume2, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, History, Keyboard, Mic, Pause, RotateCcw, Sparkles, Trash2, Volume2, X } from 'lucide-react'
 import './App.css'
 import './theme.css'
 
@@ -100,16 +100,6 @@ function App() {
   const [wordLookup, setWordLookup] = useState({ word: '', status: 'idle', translation: '' })
   const [isNativeDictation, setIsNativeDictation] = useState(false)
   const recognitionRef = useRef(null)
-  const isSessionAliveRef = useRef(false)
-  const isCapturingRef = useRef(false)
-  const attemptTargetRef = useRef({ sentence: '', index: 0 })
-  const latestAllWordsRef = useRef([])
-  const latestFullTextRef = useRef('')
-  const baselineWordsRef = useRef([])
-  const baselineFullTextRef = useRef('')
-  const latestAttemptSpokenRef = useRef('')
-  const isPlayingRef = useRef(false)
-  const ttsIgnoreUntilRef = useRef(0)
   const nativeDictationInputRef = useRef(null)
   const recordingSilenceTimeoutRef = useRef(null)
   const finishRecordingRef = useRef(null)
@@ -142,24 +132,11 @@ function App() {
     isSavedPractice,
   }
 
-  const pauseAttemptCapture = () => {
+  const closeRecognitionSession = () => {
     clearTimeout(recordingSilenceTimeoutRef.current)
     recordingSilenceTimeoutRef.current = null
-    isCapturingRef.current = false
-    setIsRecording(false)
-    baselineWordsRef.current = [...latestAllWordsRef.current]
-    baselineFullTextRef.current = latestFullTextRef.current
-    latestAttemptSpokenRef.current = ''
-  }
-
-  const closeRecognitionSession = () => {
-    pauseAttemptCapture()
     finishRecordingRef.current = null
-    isSessionAliveRef.current = false
-    latestAllWordsRef.current = []
-    latestFullTextRef.current = ''
-    baselineWordsRef.current = []
-    baselineFullTextRef.current = ''
+    setIsRecording(false)
     const current = recognitionRef.current
     recognitionRef.current = null
     if (current) {
@@ -168,12 +145,23 @@ function App() {
       current.onerror = null
       current.onend = null
       try { current.stop() } catch {}
+      try { current.abort() } catch {}
     }
   }
 
-  useEffect(() => () => {
-    window.speechSynthesis?.cancel()
-    closeRecognitionSession()
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        window.speechSynthesis?.cancel()
+        closeRecognitionSession()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.speechSynthesis?.cancel()
+      closeRecognitionSession()
+    }
   }, [])
 
   useEffect(() => {
@@ -287,22 +275,21 @@ function App() {
   }
   const speak = () => {
     if (!activeSentence || !window.speechSynthesis) return
+    closeRecognitionSession()
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(activeSentence)
     utterance.lang = 'en-US'; utterance.rate = 0.84
-    utterance.onstart = () => { isPlayingRef.current = true; setIsPlaying(true) }
-    utterance.onend = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 600; setIsPlaying(false) }
-    utterance.onerror = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 600; setIsPlaying(false) }
+    utterance.onstart = () => setIsPlaying(true)
+    utterance.onend = () => setIsPlaying(false)
+    utterance.onerror = () => setIsPlaying(false)
     window.speechSynthesis.speak(utterance)
   }
   const speakWord = (word) => {
     if (!word || !window.speechSynthesis) return
+    closeRecognitionSession()
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(word)
     utterance.lang = 'en-US'; utterance.rate = 0.78
-    utterance.onstart = () => { isPlayingRef.current = true }
-    utterance.onend = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 500 }
-    utterance.onerror = () => { isPlayingRef.current = false; ttsIgnoreUntilRef.current = Date.now() + 500 }
     window.speechSynthesis.speak(utterance)
   }
   const renderSentenceWords = (sentence) => (sentence.match(/[A-Za-z]+(?:'[A-Za-z]+)?|[^A-Za-z]+/g) ?? []).map((part, index) => {
@@ -311,10 +298,13 @@ function App() {
     return <button className={`sentence-word ${selectedWord === word ? 'selected' : ''}`} key={`${part}-${index}`} onClick={() => { setSelectedWord(word); speakWord(word) }} aria-label={`查询并朗读 ${part}`}>{part}</button>
   })
   const startNativeDictation = () => {
+    closeRecognitionSession()
+    window.speechSynthesis?.cancel()
+    setIsPlaying(false)
     setIsNativeDictation(true)
     setTranscript('')
     setResult(null)
-    setNotice('请使用 iPhone 英文键盘上的听写按钮说出这句话，然后点击评分。')
+    setNotice('请使用系统英文键盘上的听写按钮说出这句话（或直接输入），然后点击评分。')
     requestAnimationFrame(() => nativeDictationInputRef.current?.focus())
   }
   const scoreNativeDictation = () => {
@@ -332,183 +322,154 @@ function App() {
       if (nextIndex !== -1) { setActiveIndex(nextIndex); setTranscript(''); setResult(null) }
     }
   }
-  const extractCurrentAttemptText = (fullText, wordTokens) => {
-    const baselineWords = baselineWordsRef.current
-    const B = baselineWords.length
-    if (B === 0) return fullText.trim()
-    if (fullText === baselineFullTextRef.current) return ''
-
-    const tailLen = Math.min(3, B)
-    const tail = baselineWords.slice(B - tailLen)
-    for (const offset of [0, -1, 1, -2, 2]) {
-      const endIdx = B + offset
-      if (endIdx < tailLen || endIdx > wordTokens.length) continue
-      let matches = true
-      for (let i = 0; i < tailLen; i += 1) {
-        if (wordTokens[endIdx - tailLen + i].norm !== tail[i]) {
-          matches = false
-          break
-        }
-      }
-      if (matches) {
-        if (endIdx >= wordTokens.length) {
-          baselineWordsRef.current = wordTokens.map((t) => t.norm)
-          baselineFullTextRef.current = fullText
-          return ''
-        }
-        return fullText.slice(wordTokens[endIdx].index).trim()
-      }
-    }
-
-    if (wordTokens.length < B || wordTokens[0]?.norm !== baselineWords[0]) {
-      baselineWordsRef.current = []
-      baselineFullTextRef.current = ''
-      return fullText.trim()
-    }
-
-    if (wordTokens.length > B) {
-      return fullText.slice(wordTokens[B].index).trim()
-    }
-
-    baselineWordsRef.current = wordTokens.map((t) => t.norm)
-    baselineFullTextRef.current = fullText
-    return ''
-  }
-
-  const finishAttempt = () => {
-    clearTimeout(recordingSilenceTimeoutRef.current)
-    recordingSilenceTimeoutRef.current = null
-    if (!isCapturingRef.current) return
-    const spoken = latestAttemptSpokenRef.current.trim()
-    isCapturingRef.current = false
-    setIsRecording(false)
-    baselineWordsRef.current = [...latestAllWordsRef.current]
-    baselineFullTextRef.current = latestFullTextRef.current
-    latestAttemptSpokenRef.current = ''
-    if (!spoken) return
-
-    const { sentence: targetSentence, index: targetIndex } = attemptTargetRef.current
-    const { sentences: currentSentences, sentenceScores: currentScores, passingScore: currentPassingScore } = practiceStateRef.current
-    const attempt = scoreAttempt(targetSentence, spoken)
-    setResult(attempt)
-    saveSentenceScore(targetIndex, attempt)
-    if (attempt.overall >= currentPassingScore && targetIndex < currentSentences.length - 1) {
-      const nextScores = [...currentScores]
-      nextScores[targetIndex] = attempt
-      const nextIndex = firstIncompleteSentence(nextScores, currentSentences.length, currentPassingScore, targetIndex + 1)
-      if (nextIndex !== -1) {
-        setActiveIndex(nextIndex)
-        setTranscript('')
-        setResult(null)
-      }
-    }
-  }
-  finishRecordingRef.current = finishAttempt
-
   const startRecording = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) { startNativeDictation(); return }
-    if (isPlayingRef.current) {
-      window.speechSynthesis?.cancel()
-      isPlayingRef.current = false
-      ttsIgnoreUntilRef.current = Date.now() + 500
-      setIsPlaying(false)
-    }
-    clearTimeout(recordingSilenceTimeoutRef.current)
-    recordingSilenceTimeoutRef.current = null
-    attemptTargetRef.current = { sentence: activeSentence, index: activeIndex }
-    baselineWordsRef.current = [...latestAllWordsRef.current]
-    baselineFullTextRef.current = latestFullTextRef.current
-    latestAttemptSpokenRef.current = ''
+    closeRecognitionSession()
+    window.speechSynthesis?.cancel()
+    setIsPlaying(false)
+    setIsNativeDictation(false)
     setTranscript(''); setResult(null); setNotice('')
 
-    if (recognitionRef.current && isSessionAliveRef.current) {
-      isCapturingRef.current = true
-      setIsRecording(true)
-      return
+    const recognition = new SpeechRecognition()
+    const targetSentence = activeSentence
+    const targetIndex = activeIndex
+    let latestSpoken = ''
+    let hasScored = false
+    let isStopping = false
+
+    const finalizeScore = () => {
+      clearTimeout(recordingSilenceTimeoutRef.current)
+      recordingSilenceTimeoutRef.current = null
+      if (hasScored || recognitionRef.current !== recognition) return
+      const spoken = latestSpoken.trim()
+      if (!spoken) {
+        closeRecognitionSession()
+        return
+      }
+      hasScored = true
+      closeRecognitionSession()
+      const { sentences: currentSentences, sentenceScores: currentScores, passingScore: currentPassingScore } = practiceStateRef.current
+      const attempt = scoreAttempt(targetSentence, spoken)
+      setResult(attempt)
+      saveSentenceScore(targetIndex, attempt)
+      if (attempt.overall >= currentPassingScore && targetIndex < currentSentences.length - 1) {
+        const nextScores = [...currentScores]
+        nextScores[targetIndex] = attempt
+        const nextIndex = firstIncompleteSentence(nextScores, currentSentences.length, currentPassingScore, targetIndex + 1)
+        if (nextIndex !== -1) {
+          setActiveIndex(nextIndex)
+          setTranscript('')
+          setResult(null)
+        }
+      }
     }
 
-    const recognition = new SpeechRecognition()
+    const requestStop = () => {
+      clearTimeout(recordingSilenceTimeoutRef.current)
+      recordingSilenceTimeoutRef.current = null
+      if (recognitionRef.current !== recognition) return
+      if (latestSpoken.trim()) {
+        finalizeScore()
+        return
+      }
+      if (isStopping) {
+        closeRecognitionSession()
+        return
+      }
+      isStopping = true
+      try {
+        recognition.stop()
+      } catch {
+        closeRecognitionSession()
+      }
+      recordingSilenceTimeoutRef.current = setTimeout(() => {
+        if (recognitionRef.current === recognition) finalizeScore()
+      }, 800)
+    }
+
+    finishRecordingRef.current = requestStop
+
     recognition.lang = 'en-US'
     recognition.interimResults = true
     recognition.continuous = true
-    recognition.maxAlternatives = 1
+    recognition.maxAlternatives = 3
 
     recognition.onstart = () => {
       if (recognitionRef.current !== recognition) return
-      isSessionAliveRef.current = true
-      if (isCapturingRef.current) setIsRecording(true)
+      setIsRecording(true)
+      clearTimeout(recordingSilenceTimeoutRef.current)
+      recordingSilenceTimeoutRef.current = setTimeout(() => {
+        if (recognitionRef.current === recognition && !latestSpoken.trim()) {
+          closeRecognitionSession()
+          setNotice('未检测到语音输入，已自动退出录音。')
+        }
+      }, 8000)
     }
 
     recognition.onresult = (event) => {
       if (recognitionRef.current !== recognition) return
-      const fullText = Array.from(event.results)
-        .map((item) => item[0]?.transcript ?? '')
+      const spoken = Array.from(event.results)
+        .map((item) => {
+          const candidates = Array.from(item, (alternative) => alternative?.transcript ?? '').filter(Boolean)
+          if (!candidates.length) return ''
+          return candidates.reduce((best, candidate) =>
+            scoreAttempt(targetSentence, candidate).overall > scoreAttempt(targetSentence, best).overall ? candidate : best
+          )
+        })
         .join(' ')
         .trim()
-      const wordTokens = Array.from(fullText.matchAll(/[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?/g), (match) => ({
-        norm: match[0].toLowerCase(),
-        index: match.index,
-      }))
-      latestAllWordsRef.current = wordTokens.map((t) => t.norm)
-      latestFullTextRef.current = fullText
-
-      if (!isCapturingRef.current || isPlayingRef.current || Date.now() < ttsIgnoreUntilRef.current) {
-        baselineWordsRef.current = [...latestAllWordsRef.current]
-        baselineFullTextRef.current = fullText
-        return
-      }
-
-      const attemptSpoken = extractCurrentAttemptText(fullText, wordTokens)
-      if (!attemptSpoken) return
-      if (attemptSpoken !== latestAttemptSpokenRef.current) {
-        latestAttemptSpokenRef.current = attemptSpoken
-        setTranscript(attemptSpoken)
-        clearTimeout(recordingSilenceTimeoutRef.current)
-        recordingSilenceTimeoutRef.current = setTimeout(() => finishRecordingRef.current?.(), 2000)
+      if (!spoken) return
+      latestSpoken = spoken
+      setTranscript(spoken)
+      clearTimeout(recordingSilenceTimeoutRef.current)
+      const targetWordCount = normalizeWords(targetSentence).length
+      const spokenWordCount = normalizeWords(spoken).length
+      const isComplete = targetWordCount > 0 && spokenWordCount >= targetWordCount
+      if (isStopping) {
+        finalizeScore()
+      } else {
+        recordingSilenceTimeoutRef.current = setTimeout(finalizeScore, isComplete ? 800 : 1500)
       }
     }
 
     recognition.onerror = (event) => {
       if (recognitionRef.current !== recognition || event.error === 'aborted') return
-      if (!isCapturingRef.current && event.error === 'no-speech') return
+      if (latestSpoken.trim()) {
+        finalizeScore()
+        return
+      }
       const messages = {
-        'no-speech': '没有听到可识别的语音。请靠近麦克风，用正常音量完整说一句英文；语音识别会使用浏览器或系统的默认输入设备，请重试。',
-        'audio-capture': '语音识别无法读取麦克风。请关闭正在使用麦克风的其他程序后重试。',
-        'not-allowed': '语音识别未获准访问麦克风。请在地址栏的站点权限中允许麦克风访问。',
-        'service-not-allowed': '当前浏览器不允许使用在线语音识别服务。请检查系统听写或语音识别权限。',
-        network: '语音识别服务需要网络连接。请检查网络后重试。',
+        'no-speech': '没有听到可识别的语音。请靠近麦克风重试，或点击右侧键盘图标使用系统键盘听写。',
+        'audio-capture': '语音识别无法读取麦克风。请关闭正在使用麦克风的其他程序，或切换键盘听写。',
+        'not-allowed': '语音识别未获准访问麦克风。请在浏览器权限中允许麦克风访问，或切换键盘听写。',
+        'service-not-allowed': '当前浏览器限制了网页语音识别服务，已为您切换至系统键盘听写模式。',
+        network: '语音识别服务需要网络连接。请检查网络后重试，或切换键盘听写。',
       }
-      if (isCapturingRef.current) {
-        setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试。`)
-        pauseAttemptCapture()
+      closeRecognitionSession()
+      if (event.error === 'service-not-allowed') {
+        startNativeDictation()
+        return
       }
+      setNotice(messages[event.error] || `语音识别未能完成（${event.error}）。请重试或切换键盘听写。`)
     }
 
     recognition.onend = () => {
       if (recognitionRef.current !== recognition) return
-      if (isCapturingRef.current && latestAttemptSpokenRef.current.trim()) {
-        finishRecordingRef.current?.()
-      } else {
-        pauseAttemptCapture()
+      if (!hasScored && latestSpoken.trim()) {
+        finalizeScore()
+        return
       }
-      recognitionRef.current = null
-      isSessionAliveRef.current = false
-      latestAllWordsRef.current = []
-      latestFullTextRef.current = ''
-      baselineWordsRef.current = []
-      baselineFullTextRef.current = ''
+      closeRecognitionSession()
     }
 
     recognitionRef.current = recognition
-    isSessionAliveRef.current = true
-    isCapturingRef.current = true
     setIsRecording(true)
     try {
       recognition.start()
     } catch {
       closeRecognitionSession()
-      setNotice('无法启动语音识别，请稍后再试。')
+      startNativeDictation()
     }
   }
   const retryAttempt = () => {
@@ -521,7 +482,7 @@ function App() {
       return
     }
     if (next >= 0 && next < sentences.length) {
-      pauseAttemptCapture()
+      closeRecognitionSession()
       setActiveIndex(next)
       setTranscript('')
       setResult(sentenceScores[next] || null)
@@ -560,8 +521,8 @@ function App() {
           {activeView === 'practice' && <section className="practice-panel" aria-live="polite"><div className="session-header"><div><p className="eyebrow">SHADOWING SESSION</p><h2>逐句跟读</h2></div><div className="sentence-count">{activeIndex + 1} <span>/ {sentences.length}</span></div></div>
         {isPracticeComplete ? <section className="completion-panel"><p className="eyebrow">SESSION COMPLETE</p><h3>本次平均得分</h3><div className="completion-donut"><svg viewBox="0 0 120 120" aria-label={`平均得分 ${averageScore} 分`} role="img"><circle className="donut-track" cx="60" cy="60" r="48" pathLength="100" /><circle className="donut-value" cx="60" cy="60" r="48" pathLength="100" strokeDasharray={`${averageScore} ${100 - averageScore}`} /></svg><div><strong>{averageScore}</strong><span>分</span></div></div><p className="completion-detail">总分 {scoreTotal} ÷ {sentences.length} 句</p></section> : <><div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
         <article className={`sentence-card ${sentenceStatus}`}><span className="quote-mark">“</span><p>{activeSentence ? renderSentenceWords(activeSentence) : '准备好后，从左侧输入英文文本。'}</p>{selectedWord && <div className="word-lookup" role="status"><div><span>{selectedWord}</span><strong>{wordLookup.word === selectedWord && wordLookup.status === 'loading' ? '正在查询中文释义...' : wordLookup.translation}</strong></div><button className="word-listen-button" onClick={() => speakWord(selectedWord)} title="朗读单词" aria-label={`朗读 ${selectedWord}`}><Volume2 size={18} /></button></div>}</article>
-        <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : isNativeDictation ? '使用系统键盘听写' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : isNativeDictation ? '完成后点击评分' : '请允许浏览器使用麦克风'}</p></div><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence || isRecording} title={isPlaying ? '停止播放' : '听原句'} aria-label={isPlaying ? '停止播放' : '听原句'}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}</button></div>
-        {isNativeDictation && <div className="native-dictation"><textarea ref={nativeDictationInputRef} value={transcript} onChange={(event) => setTranscript(event.target.value)} rows="3" lang="en-US" autoCapitalize="sentences" placeholder="Use the English keyboard dictation..." aria-label="系统键盘听写结果" /><div><button className="secondary-button" onClick={() => { setIsNativeDictation(false); setNotice('') }}>取消</button><button className="primary-button" onClick={scoreNativeDictation}>评分 <ChevronRight size={17} /></button></div></div>}
+        <div className="record-area"><button className={`record-button ${isRecording ? 'recording' : ''}`} onClick={isRecording ? () => finishRecordingRef.current?.() : startRecording} disabled={!activeSentence} aria-label={isRecording ? '停止录音' : '开始录音'}>{isRecording ? <X size={28} /> : <Mic size={29} />}</button><div><h3>{isRecording ? '正在聆听...' : isNativeDictation ? '使用系统键盘听写' : '按下并开始跟读'}</h3><p>{isRecording ? '说完后再次点击停止录音' : isNativeDictation ? '完成后点击评分' : '请允许浏览器使用麦克风，或用右侧键盘听写'}</p></div><div className="record-controls"><button className={`dictation-toggle-button ${isNativeDictation ? 'active' : ''}`} onClick={() => { if (isNativeDictation) { setIsNativeDictation(false); setNotice('') } else { startNativeDictation() } }} disabled={!activeSentence || isRecording} title={isNativeDictation ? '关闭键盘听写' : '使用键盘听写'} aria-label={isNativeDictation ? '关闭键盘听写' : '使用键盘听写'}><Keyboard size={18} /></button><button className="listen-button" onClick={isPlaying ? () => { window.speechSynthesis?.cancel(); setIsPlaying(false) } : speak} disabled={!activeSentence || isRecording} title={isPlaying ? '停止播放' : '听原句'} aria-label={isPlaying ? '停止播放' : '听原句'}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Volume2 size={19} />}</button></div></div>
+        {isNativeDictation && <div className="native-dictation"><textarea ref={nativeDictationInputRef} value={transcript} onChange={(event) => setTranscript(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); scoreNativeDictation() } }} rows="3" lang="en-US" autoCapitalize="sentences" placeholder="Use the English keyboard dictation..." aria-label="系统键盘听写结果" /><div><button className="secondary-button" onClick={() => { setIsNativeDictation(false); setNotice('') }}>取消</button><button className="primary-button" onClick={scoreNativeDictation}>评分 <ChevronRight size={17} /></button></div></div>}
         {notice && <p className="notice">{notice}</p>}
         {transcript && <div className="transcript-box"><p className="eyebrow">识别到的内容</p><p>{transcript}</p></div>}
         {result && <section className="score-card"><div className="score-ring"><strong>{result.overall}</strong><span>分</span></div><div className="score-copy"><p className="eyebrow">本句表现</p><h3>{result.overall >= passingScore ? '已达到通关标准' : '再试一次，会更好'}</h3><div className="metrics"><span>词汇准确度 <b>{result.accuracy}%</b></span><span>节奏匹配 <b>{result.pace}%</b></span></div></div>{result.overall < passingScore ? <button className="secondary-button" onClick={retryAttempt}><RotateCcw size={17} />重新挑战</button> : <button className="icon-button" onClick={retryAttempt} title="重新跟读" aria-label="重新跟读"><RotateCcw size={19} /></button>}</section>}
